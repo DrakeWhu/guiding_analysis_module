@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local outputs
+analysis_outputs/
+capillaries_clpu/
+metrics_guiding/
+plots_baseline/
+animation_eperp2/
+
+# Heavy simulation data
+*.h5
+*.hdf5
+*.bp
+*.bp4
+*.bp5
+openpmd_*/
+diags/
+diag1/
+
+# Generated media
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.mp4
+*.avi
+*.mov
+
+# OS/editor junk
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
