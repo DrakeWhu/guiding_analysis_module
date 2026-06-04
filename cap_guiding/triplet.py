@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
+from .case_metadata import infer_plateau_window_mm_from_sources
 
 
 CASE_ORDER = ["channel", "uniform", "vacuum"]
@@ -210,50 +210,19 @@ def nanmedian(series: pd.Series) -> float:
     return float(np.nanmedian(arr))
 
 
-def infer_plateau_window_mm_from_text(text: str) -> tuple[float, float] | None:
-    """Infer plateau start/end positions in mm from case names or paths.
-
-    Current CLPU convention:
-    - longitudinal ramp-up length = 5 mm
-    - plateau length encoded as L5mm, L10mm, L25mm, ...
-    """
-    m = re.search(r"_L(\d+(?:\.\d+)?)mm(?:_|$)", text)
-    if m is None:
-        return None
-
-    plateau_length_mm = float(m.group(1))
-    plateau_start_mm = 5.0
-    plateau_end_mm = plateau_start_mm + plateau_length_mm
-    return plateau_start_mm, plateau_end_mm
-
-
 def infer_plateau_window_mm_from_aligned(
     aligned: dict[str, pd.DataFrame],
 ) -> tuple[float, float] | None:
     """Infer plateau window from source_csv paths in aligned case dataframes."""
-    windows: list[tuple[float, float]] = []
+    sources: list[str] = []
 
     for case in CASE_ORDER:
         df = aligned.get(case)
         if df is None or "source_csv" not in df.columns or df.empty:
             continue
+        sources.append(str(df["source_csv"].iloc[0]))
 
-        source_csv = str(df["source_csv"].iloc[0])
-        window = infer_plateau_window_mm_from_text(source_csv)
-
-        if window is not None:
-            windows.append(window)
-
-    if not windows:
-        return None
-
-    unique = set(windows)
-    if len(unique) != 1:
-        raise ValueError(
-            f"Inconsistent plateau windows inferred from triplet CSVs: {sorted(unique)}"
-        )
-
-    return windows[0]
+    return infer_plateau_window_mm_from_sources(sources)
 
 
 def build_late_summary(wide: pd.DataFrame, late_fraction: float) -> pd.DataFrame:
@@ -358,10 +327,20 @@ def build_triplet_tables(
     wide = build_wide(aligned)
 
     if plateau_window_mm is not None:
+        plateau_start_mm, plateau_end_mm = plateau_window_mm
         wide.attrs["plateau_window_mm"] = plateau_window_mm
+        wide["plateau_start_mm"] = plateau_start_mm
+        wide["plateau_end_mm"] = plateau_end_mm
+        long.attrs["plateau_window_mm"] = plateau_window_mm
 
     late_summary = build_late_summary(wide, late_fraction)
     late_ratios = build_late_ratios(wide, late_fraction)
+
+    if plateau_window_mm is not None:
+        for df in (late_summary, late_ratios):
+            df.attrs["plateau_window_mm"] = plateau_window_mm
+            df["plateau_start_mm"] = plateau_window_mm[0]
+            df["plateau_end_mm"] = plateau_window_mm[1]
 
     for df in (long, wide, late_summary, late_ratios):
         df.insert(0, "triplet", label)

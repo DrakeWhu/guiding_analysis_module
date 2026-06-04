@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from typing import Any
 
@@ -11,79 +10,12 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
+from .case_metadata import infer_plateau_window_mm_from_text
 from .metrics import first_valid_laser_index
 
 
 def _arr(rows: list[dict[str, Any]], key: str) -> np.ndarray:
     return np.array([r[key] for r in rows], dtype=float)
-
-
-def draw_plateau_window(
-    ax,
-    plateau_window_mm: tuple[float, float] | None,
-    labels: bool = False,
-) -> None:
-    """Draw plateau start/end vertical markers on an existing matplotlib axis."""
-    if plateau_window_mm is None:
-        return
-
-    plateau_start_mm, plateau_end_mm = plateau_window_mm
-
-    ax.axvline(
-        plateau_start_mm,
-        linestyle=":",
-        linewidth=1.2,
-        alpha=0.9,
-    )
-    ax.axvline(
-        plateau_end_mm,
-        linestyle=":",
-        linewidth=1.2,
-        alpha=0.9,
-    )
-
-    if labels:
-        ax.text(
-            plateau_start_mm,
-            0.02,
-            " plateau start",
-            transform=ax.get_xaxis_transform(),
-            va="bottom",
-            ha="left",
-            fontsize=8,
-        )
-        ax.text(
-            plateau_end_mm,
-            0.02,
-            " plateau end",
-            transform=ax.get_xaxis_transform(),
-            va="bottom",
-            ha="left",
-            fontsize=8,
-        )
-
-
-def infer_plateau_window_mm_from_name(name: str) -> tuple[float, float] | None:
-    """Infer plateau start/end positions in mm from a case/output name.
-
-    Convention used in current campaigns:
-    - ramp-up always starts at z = 0 mm and ends at z = 5 mm
-    - plateau length is encoded as L5mm, L10mm, L25mm, etc.
-    - therefore:
-        plateau_start_mm = 5.0
-        plateau_end_mm = 5.0 + plateau_length_mm
-    """
-    m = re.search(r"_L(\d+(?:\.\d+)?)mm_", name)
-    if m is None:
-        m = re.search(r"_L(\d+(?:\.\d+)?)mm($|_)", name)
-
-    if m is None:
-        return None
-
-    plateau_length_mm = float(m.group(1))
-    plateau_start_mm = 5.0
-    plateau_end_mm = plateau_start_mm + plateau_length_mm
-    return plateau_start_mm, plateau_end_mm
 
 
 def draw_plateau_window(
@@ -97,18 +29,8 @@ def draw_plateau_window(
 
     plateau_start_mm, plateau_end_mm = plateau_window_mm
 
-    ax.axvline(
-        plateau_start_mm,
-        linestyle=":",
-        linewidth=1.2,
-        alpha=0.9,
-    )
-    ax.axvline(
-        plateau_end_mm,
-        linestyle=":",
-        linewidth=1.2,
-        alpha=0.9,
-    )
+    ax.axvline(plateau_start_mm, linestyle=":", linewidth=1.2, alpha=0.9)
+    ax.axvline(plateau_end_mm, linestyle=":", linewidth=1.2, alpha=0.9)
 
     if labels:
         ax.text(
@@ -169,7 +91,7 @@ def save_case_plots(rows: list[dict[str, Any]], outdir: str | Path) -> None:
     plots = outdir / "plots"
     plots.mkdir(parents=True, exist_ok=True)
 
-    plateau_window_mm = infer_plateau_window_mm_from_name(outdir.name)
+    plateau_window_mm = infer_plateau_window_mm_from_text(str(outdir))
 
     propagation_mm = _arr(rows, "propagation_mm")
     z_peak = _arr(rows, "z_peak_um")
@@ -361,12 +283,27 @@ def save_triplet_line_plot(
     print(f"[OK] wrote {path}")
 
 
+def _plateau_window_from_wide(wide) -> tuple[float, float] | None:
+    """Read plateau metadata from DataFrame attrs or persistent CSV columns."""
+    window = wide.attrs.get("plateau_window_mm")
+    if window is not None:
+        return tuple(float(x) for x in window)
+
+    if {"plateau_start_mm", "plateau_end_mm"}.issubset(wide.columns):
+        start = float(wide["plateau_start_mm"].iloc[0])
+        end = float(wide["plateau_end_mm"].iloc[0])
+        if np.isfinite(start) and np.isfinite(end) and end > start:
+            return start, end
+
+    return None
+
+
 def save_triplet_plots(wide, outdir: str | Path) -> None:
     outdir = Path(outdir)
     plots = outdir / "plots"
     plots.mkdir(parents=True, exist_ok=True)
 
-    plateau_window_mm = wide.attrs.get("plateau_window_mm")
+    plateau_window_mm = _plateau_window_from_wide(wide)
 
     case_order = ["channel", "uniform", "vacuum"]
 
@@ -376,6 +313,7 @@ def save_triplet_plots(wide, outdir: str | Path) -> None:
         "laser waist RMS [µm]",
         "Laser waist comparison",
         plots / "waist_comparison.png",
+        plateau_window_mm=plateau_window_mm,
     )
 
     save_triplet_line_plot(
@@ -384,6 +322,7 @@ def save_triplet_plots(wide, outdir: str | Path) -> None:
         "peak I proxy / first valid dump",
         "Peak intensity proxy comparison",
         plots / "peakI_norm_comparison.png",
+        plateau_window_mm=plateau_window_mm,
     )
 
     save_triplet_line_plot(
@@ -392,6 +331,7 @@ def save_triplet_plots(wide, outdir: str | Path) -> None:
         "energy proxy / first valid dump",
         "Laser energy proxy comparison",
         plots / "energy_norm_comparison.png",
+        plateau_window_mm=plateau_window_mm,
     )
 
     save_triplet_line_plot(
@@ -400,6 +340,7 @@ def save_triplet_plots(wide, outdir: str | Path) -> None:
         "max |Ez wake| [GV/m]",
         "Wake-field amplitude comparison",
         plots / "Ez_wake_absmax_comparison.png",
+        plateau_window_mm=plateau_window_mm,
     )
 
     save_triplet_line_plot(
@@ -413,6 +354,7 @@ def save_triplet_plots(wide, outdir: str | Path) -> None:
         "Waist ratios; lower is stronger optical confinement",
         plots / "waist_ratios.png",
         hline=1.0,
+        plateau_window_mm=plateau_window_mm,
     )
 
     save_triplet_line_plot(
@@ -426,6 +368,7 @@ def save_triplet_plots(wide, outdir: str | Path) -> None:
         "Peak-intensity ratios; higher means stronger peak preservation/focusing",
         plots / "peakI_ratios.png",
         hline=1.0,
+        plateau_window_mm=plateau_window_mm,
     )
 
     save_triplet_line_plot(
@@ -439,6 +382,7 @@ def save_triplet_plots(wide, outdir: str | Path) -> None:
         "Energy-proxy ratios; interpret with depletion/transfer in mind",
         plots / "energy_ratios.png",
         hline=1.0,
+        plateau_window_mm=plateau_window_mm,
     )
 
     has_a0_triplet = all(f"a0_peak_{c}" in wide.columns for c in case_order)
@@ -450,6 +394,7 @@ def save_triplet_plots(wide, outdir: str | Path) -> None:
             "peak a0",
             "Peak a0 comparison",
             plots / "a0_peak_comparison.png",
+            plateau_window_mm=plateau_window_mm,
         )
 
         save_triplet_line_plot(
@@ -463,9 +408,8 @@ def save_triplet_plots(wide, outdir: str | Path) -> None:
             "Peak a0 ratios",
             plots / "a0_ratios.png",
             hline=1.0,
+            plateau_window_mm=plateau_window_mm,
         )
-    else:
-        has_a0_triplet = False
 
     fig, axs = plt.subplots(2, 2, figsize=(11, 8), sharex=True)
 
@@ -520,11 +464,7 @@ def save_triplet_plots(wide, outdir: str | Path) -> None:
         if hline is not None:
             ax.axhline(hline, linestyle="--", linewidth=1)
 
-        draw_plateau_window(
-            ax,
-            wide.attrs.get("plateau_window_mm"),
-            labels=False,
-        )
+        draw_plateau_window(ax, plateau_window_mm, labels=False)
 
         ax.set_ylabel(ylabel)
         ax.set_title(title)
