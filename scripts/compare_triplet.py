@@ -61,6 +61,25 @@ def main() -> None:
     print(f"late_fraction = {args.late_fraction}")
     print("============================================")
 
+    missing = [
+        path
+        for path in [Path(args.channel), Path(args.uniform), Path(args.vacuum)]
+        if not path.is_file()
+    ]
+
+    if missing:
+        print()
+        print("[ERROR] Missing guiding_metrics.csv file(s):")
+        for path in missing:
+            print(f"  - {path}")
+        print()
+        print(
+            "compare_triplet.py only compares existing CSVs. "
+            "To generate missing case metrics from WarpX diagnostics, use "
+            "scripts/compare_triplet_cases.py or scripts/analyze_campaign.py."
+        )
+        raise SystemExit(2)
+
     tables = build_triplet_tables(
         channel_csv=args.channel,
         uniform_csv=args.uniform,

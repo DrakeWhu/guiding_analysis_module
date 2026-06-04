@@ -107,14 +107,27 @@ def align_common_iterations(cases: dict[str, pd.DataFrame]) -> dict[str, pd.Data
         raise ValueError(f"Missing cases: {missing_cases}")
 
     common: set[int] | None = None
+    iterations_by_case: dict[str, set[int]] = {}
 
     for case in CASE_ORDER:
         df = cases[case]
         its = set(df["iteration"].dropna().astype(int).tolist())
+        iterations_by_case[case] = its
         common = its if common is None else common & its
 
     if not common:
-        raise ValueError("No common iterations across channel/uniform/vacuum")
+        details = []
+
+        for case in CASE_ORDER:
+            its = iterations_by_case[case]
+            if its:
+                details.append(f"{case}: n={len(its)}, min={min(its)}, max={max(its)}")
+            else:
+                details.append(f"{case}: n=0")
+
+        raise ValueError(
+            "No common iterations across channel/uniform/vacuum. " + "; ".join(details)
+        )
 
     # Semantic rule: channel is the limiting/reference case.
     channel_last = int(cases["channel"]["iteration"].max())
