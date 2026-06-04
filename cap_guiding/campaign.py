@@ -202,12 +202,53 @@ def load_cases_from_cases_full(campaign_root: str | Path) -> list[CaseInfo]:
     df = _read_cases_full_dataframe(cases_path)
     columns = list(df.columns)
 
-    case_col = _pick_column(columns, ["case_id", "case", "name", "run", "run_id"])
-    path_col = _pick_column(
-        columns, ["case_dir", "dir", "directory", "path", "run_dir"]
+    # Prefer columns that contain the actual case folder/name over numeric IDs.
+    # In the F32 campaign, CASE_ID is "000" but CASE_NAME is the real directory:
+    # 000_f32_chan_n7e17cm3_L5mm_focm500um_rz
+    case_col = _pick_column(
+        columns,
+        [
+            "case_name",
+            "case_dir_name",
+            "case_folder",
+            "case",
+            "name",
+            "run_name",
+            "run",
+            "run_id",
+            "case_id",
+        ],
     )
-    diag_col = _pick_column(columns, ["diag", "diag_dir", "diag_path"])
-    type_col = _pick_column(columns, ["case_type", "type", "profile", "plasma", "kind"])
+    path_col = _pick_column(
+        columns,
+        [
+            "case_dir",
+            "dir",
+            "directory",
+            "path",
+            "run_dir",
+            "case_path",
+        ],
+    )
+    diag_col = _pick_column(
+        columns,
+        [
+            "diag",
+            "diag_dir",
+            "diag_path",
+        ],
+    )
+    type_col = _pick_column(
+        columns,
+        [
+            "case_type",
+            "type",
+            "profile",
+            "plasma",
+            "plasma_kind",
+            "kind",
+        ],
+    )
 
     if case_col is None and path_col is None:
         raise ValueError(
