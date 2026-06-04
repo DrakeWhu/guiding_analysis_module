@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -106,11 +107,97 @@ def infer_case_type(case_id: str) -> str | None:
     return None
 
 
-def count_h5(diag_dir: str | Path) -> int:
+def iter_h5_files(diag_dir: str | Path) -> list[Path]:
     diag_dir = Path(diag_dir)
     if not diag_dir.is_dir():
-        return 0
-    return sum(1 for path in diag_dir.rglob("*.h5") if path.is_file())
+        return []
+    return sorted(path for path in diag_dir.rglob("*.h5") if path.is_file())
+
+
+def count_h5(diag_dir: str | Path) -> int:
+    return len(iter_h5_files(diag_dir))
+
+
+def newest_h5_mtime(diag_dir: str | Path) -> float | None:
+    h5_files = iter_h5_files(diag_dir)
+    if not h5_files:
+        return None
+    return max(path.stat().st_mtime for path in h5_files)
+
+
+def newest_h5_age_min(diag_dir: str | Path, now: float | None = None) -> float | None:
+    mtime = newest_h5_mtime(diag_dir)
+    if mtime is None:
+        return None
+
+    if now is None:
+        now = time.time()
+
+    return max(0.0, (now - mtime) / 60.0)
+
+
+def case_has_min_h5(case: CaseInfo, min_h5: int) -> bool:
+    return case.h5_count >= min_h5
+
+
+def case_has_stable_h5(
+    case: CaseInfo,
+    min_last_h5_age_min: float = 0.0,
+    now: float | None = None,
+) -> bool:
+    """Return True if the newest HDF5 file is old enough.
+
+    min_last_h5_age_min=0 disables this stability gate.
+    """
+    if min_last_h5_age_min <= 0.0:
+        return True
+
+    age = newest_h5_age_min(case.diag_dir, now=now)
+    return age is not None and age >= min_last_h5_age_min
+
+
+def case_is_ready(
+    case: CaseInfo,
+    min_h5: int,
+    min_last_h5_age_min: float = 0.0,
+    now: float | None = None,
+) -> bool:
+    return case_has_min_h5(case, min_h5=min_h5) and case_has_stable_h5(
+        case,
+        min_last_h5_age_min=min_last_h5_age_min,
+        now=now,
+    )
+
+
+def triplet_ready_min_h5(triplet: TripletInfo, min_h5: int) -> bool:
+    if not triplet.complete:
+        return False
+
+    return all(
+        case is not None and case_has_min_h5(case, min_h5=min_h5)
+        for case in [triplet.channel, triplet.uniform, triplet.vacuum]
+    )
+
+
+def triplet_is_ready(
+    triplet: TripletInfo,
+    min_h5: int,
+    min_last_h5_age_min: float = 0.0,
+    now: float | None = None,
+) -> bool:
+    if not triplet.complete:
+        return False
+
+    return all(
+        case is not None
+        and case_is_ready(
+            case,
+            min_h5=min_h5,
+            min_last_h5_age_min=min_last_h5_age_min,
+            now=now,
+        )
+        for case in [triplet.channel, triplet.uniform, triplet.vacuum]
+    )
 
 
 def infer_case_info_from_dir(
@@ -405,14 +492,18 @@ def write_campaign_report(
     triplets: list[TripletInfo],
     outdir: str | Path,
     min_h5: int,
+    min_last_h5_age_min: float = 0.0,
 ) -> dict[str, Path]:
     outdir = Path(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
+
+    now = time.time()
 
     paths = {
         "cases": outdir / "campaign_cases.csv",
         "triplets": outdir / "campaign_triplets.csv",
         "insufficient_h5": outdir / "campaign_insufficient_h5.csv",
+        "unstable_h5": outdir / "campaign_unstable_h5.csv",
     }
 
     with paths["cases"].open("w", newline="") as f:
@@ -422,6 +513,10 @@ def write_campaign_report(
             "case_dir",
             "diag_dir",
             "h5_count",
+            "newest_h5_age_min",
+            "ready_min_h5",
+            "stable_min_age",
+            "ready_for_analysis",
             "laser_case",
             "density",
             "ref_density",
@@ -434,41 +529,107 @@ def write_campaign_report(
         writer.writeheader()
 
         for case in cases:
-            writer.writerow({name: getattr(case, name) for name in fieldnames})
+            age = newest_h5_age_min(case.diag_dir, now=now)
+            ready_min = case_has_min_h5(case, min_h5=min_h5)
+            stable = case_has_stable_h5(
+                case,
+                min_last_h5_age_min=min_last_h5_age_min,
+                now=now,
+            )
+
+            writer.writerow(
+                {
+                    "case_id": case.case_id,
+                    "case_type": case.case_type,
+                    "case_dir": case.case_dir,
+                    "diag_dir": case.diag_dir,
+                    "h5_count": case.h5_count,
+                    "newest_h5_age_min": "" if age is None else f"{age:.3f}",
+                    "ready_min_h5": ready_min,
+                    "stable_min_age": stable,
+                    "ready_for_analysis": ready_min and stable,
+                    "laser_case": case.laser_case,
+                    "density": case.density,
+                    "ref_density": case.ref_density,
+                    "plateau": case.plateau,
+                    "focus": case.focus,
+                    "source": case.source,
+                }
+            )
 
     with paths["triplets"].open("w", newline="") as f:
         fieldnames = [
             "label",
             "complete",
+            "ready_min_h5",
+            "stable_min_age",
+            "ready_for_analysis",
             "channel",
             "uniform",
             "vacuum",
             "channel_h5",
             "uniform_h5",
             "vacuum_h5",
-            "ready_min_h5",
+            "channel_newest_h5_age_min",
+            "uniform_newest_h5_age_min",
+            "vacuum_newest_h5_age_min",
+            "min_last_h5_age_min",
         ]
 
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
 
         for triplet in triplets:
-            members = [triplet.channel, triplet.uniform, triplet.vacuum]
-            ready = triplet.complete and all(
-                case is not None and case.h5_count >= min_h5 for case in members
+            channel_age = (
+                newest_h5_age_min(triplet.channel.diag_dir, now=now)
+                if triplet.channel is not None
+                else None
+            )
+            uniform_age = (
+                newest_h5_age_min(triplet.uniform.diag_dir, now=now)
+                if triplet.uniform is not None
+                else None
+            )
+            vacuum_age = (
+                newest_h5_age_min(triplet.vacuum.diag_dir, now=now)
+                if triplet.vacuum is not None
+                else None
+            )
+
+            ready_min = triplet_ready_min_h5(triplet, min_h5=min_h5)
+            stable = triplet.complete and all(
+                case is not None
+                and case_has_stable_h5(
+                    case,
+                    min_last_h5_age_min=min_last_h5_age_min,
+                    now=now,
+                )
+                for case in [triplet.channel, triplet.uniform, triplet.vacuum]
             )
 
             writer.writerow(
                 {
                     "label": triplet.label,
                     "complete": triplet.complete,
+                    "ready_min_h5": ready_min,
+                    "stable_min_age": stable,
+                    "ready_for_analysis": ready_min and stable,
                     "channel": triplet.channel.case_id if triplet.channel else "",
                     "uniform": triplet.uniform.case_id if triplet.uniform else "",
                     "vacuum": triplet.vacuum.case_id if triplet.vacuum else "",
                     "channel_h5": triplet.channel.h5_count if triplet.channel else "",
                     "uniform_h5": triplet.uniform.h5_count if triplet.uniform else "",
                     "vacuum_h5": triplet.vacuum.h5_count if triplet.vacuum else "",
-                    "ready_min_h5": ready,
+                    "channel_newest_h5_age_min": ""
+                    if channel_age is None
+                    else f"{channel_age:.3f}",
+                    "uniform_newest_h5_age_min": ""
+                    if uniform_age is None
+                    else f"{uniform_age:.3f}",
+                    "vacuum_newest_h5_age_min": ""
+                    if vacuum_age is None
+                    else f"{vacuum_age:.3f}",
+                    "min_last_h5_age_min": min_last_h5_age_min,
                 }
             )
 
@@ -488,6 +649,43 @@ def write_campaign_report(
                     "diag_dir": case.diag_dir,
                     "h5_count": case.h5_count,
                     "min_h5": min_h5,
+                }
+            )
+
+    unstable = [
+        case
+        for case in cases
+        if case_has_min_h5(case, min_h5=min_h5)
+        and not case_has_stable_h5(
+            case,
+            min_last_h5_age_min=min_last_h5_age_min,
+            now=now,
+        )
+    ]
+
+    with paths["unstable_h5"].open("w", newline="") as f:
+        fieldnames = [
+            "case_id",
+            "case_type",
+            "diag_dir",
+            "h5_count",
+            "newest_h5_age_min",
+            "min_last_h5_age_min",
+        ]
+
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+
+        for case in unstable:
+            age = newest_h5_age_min(case.diag_dir, now=now)
+            writer.writerow(
+                {
+                    "case_id": case.case_id,
+                    "case_type": case.case_type,
+                    "diag_dir": case.diag_dir,
+                    "h5_count": case.h5_count,
+                    "newest_h5_age_min": "" if age is None else f"{age:.3f}",
+                    "min_last_h5_age_min": min_last_h5_age_min,
                 }
             )
 

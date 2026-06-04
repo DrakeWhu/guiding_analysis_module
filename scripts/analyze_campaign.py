@@ -9,7 +9,15 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from cap_guiding.campaign import build_triplets, discover_cases, write_campaign_report
+from cap_guiding.campaign import (
+    build_triplets,
+    case_is_ready,
+    discover_cases,
+    newest_h5_age_min,
+    triplet_is_ready,
+    triplet_ready_min_h5,
+    write_campaign_report,
+)
 from cap_guiding.plots import save_triplet_plots
 from cap_guiding.triplet import build_triplet_tables, write_triplet_tables
 from cap_guiding.workflows import ensure_case_metrics
@@ -72,6 +80,17 @@ def main() -> None:
     )
 
     parser.add_argument("--min-h5", type=int, default=2)
+    parser.add_argument(
+        "--min-last-h5-age-min",
+        type=float,
+        default=0.0,
+        help=(
+            "Require the newest HDF5 file of each case to be at least this many "
+            "minutes old before analyzing it. Use this to avoid reading active "
+            "WarpX/openPMD diagnostics while a campaign is still running. "
+            "Default 0 disables the stability gate."
+        ),
+    )
     parser.add_argument("--stride", type=int, default=1)
     parser.add_argument("--smooth-um", type=float, default=2.0)
     parser.add_argument("--wake-behind-um", type=float, default=120.0)
@@ -103,11 +122,41 @@ def main() -> None:
     complete = [triplet for triplet in triplets if triplet.complete]
     incomplete = [triplet for triplet in triplets if not triplet.complete]
 
+    ready_min_h5 = [
+        triplet
+        for triplet in complete
+        if triplet_ready_min_h5(triplet, min_h5=args.min_h5)
+    ]
+
+    ready_for_analysis = [
+        triplet
+        for triplet in complete
+        if triplet_is_ready(
+            triplet,
+            min_h5=args.min_h5,
+            min_last_h5_age_min=args.min_last_h5_age_min,
+        )
+    ]
+
+    insufficient_cases = [case for case in cases if case.h5_count < args.min_h5]
+
+    unstable_cases = [
+        case
+        for case in cases
+        if case.h5_count >= args.min_h5
+        and not case_is_ready(
+            case,
+            min_h5=args.min_h5,
+            min_last_h5_age_min=args.min_last_h5_age_min,
+        )
+    ]
+
     report_paths = write_campaign_report(
         cases=cases,
         triplets=triplets,
         outdir=outdir,
         min_h5=args.min_h5,
+        min_last_h5_age_min=args.min_last_h5_age_min,
     )
 
     print("=== Campaign dry-run summary ===")
@@ -116,9 +165,14 @@ def main() -> None:
     print(f"case_metrics_root    = {case_metrics_root}")
     print(f"triplets_root        = {triplets_root}")
     print(f"cases detected       = {len(cases)}")
-    print(f"triplets complete    = {len(complete)}")
-    print(f"triplets incomplete  = {len(incomplete)}")
-    print(f"min_h5               = {args.min_h5}")
+    print(f"triplets structural complete = {len(complete)}")
+    print(f"triplets ready min_h5        = {len(ready_min_h5)}")
+    print(f"triplets ready for analysis  = {len(ready_for_analysis)}")
+    print(f"triplets incomplete          = {len(incomplete)}")
+    print(f"cases insufficient h5        = {len(insufficient_cases)}")
+    print(f"cases unstable h5 age        = {len(unstable_cases)}")
+    print(f"min_h5                       = {args.min_h5}")
+    print(f"min_last_h5_age_min          = {args.min_last_h5_age_min}")
     print("reports:")
     for path in report_paths.values():
         print(f"  - {path}")
@@ -129,10 +183,19 @@ def main() -> None:
 
     if args.run_cases:
         for case in cases:
-            if case.h5_count < args.min_h5:
+            if not case_is_ready(
+                case,
+                min_h5=args.min_h5,
+                min_last_h5_age_min=args.min_last_h5_age_min,
+            ):
+                age = newest_h5_age_min(case.diag_dir)
+                age_text = "none" if age is None else f"{age:.2f} min"
                 print(
-                    f"[SKIP] insufficient HDF5 "
-                    f"({case.h5_count} < {args.min_h5}): {case.case_id}"
+                    f"[SKIP] case not ready "
+                    f"(h5={case.h5_count}, min_h5={args.min_h5}, "
+                    f"newest_h5_age={age_text}, "
+                    f"min_last_h5_age_min={args.min_last_h5_age_min}): "
+                    f"{case.case_id}"
                 )
                 continue
 
@@ -163,8 +226,24 @@ def main() -> None:
 
             members = [triplet.channel, triplet.uniform, triplet.vacuum]
 
-            if any(case.h5_count < args.min_h5 for case in members):
-                print(f"[SKIP] triplet has insufficient HDF5: {triplet.label}")
+            if not triplet_is_ready(
+                triplet,
+                min_h5=args.min_h5,
+                min_last_h5_age_min=args.min_last_h5_age_min,
+            ):
+                print(
+                    f"[SKIP] triplet not ready "
+                    f"(min_h5={args.min_h5}, "
+                    f"min_last_h5_age_min={args.min_last_h5_age_min}): "
+                    f"{triplet.label}"
+                )
+                for case in members:
+                    age = newest_h5_age_min(case.diag_dir)
+                    age_text = "none" if age is None else f"{age:.2f} min"
+                    print(
+                        f"       - {case.case_id}: "
+                        f"h5={case.h5_count}, newest_h5_age={age_text}"
+                    )
                 continue
 
             channel_csv = _case_metrics_path(case_metrics_root, triplet.channel.case_id)
