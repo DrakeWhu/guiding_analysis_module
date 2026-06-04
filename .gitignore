@@ -15,6 +15,7 @@ capillaries_clpu/
 metrics_guiding/
 plots_baseline/
 animation_eperp2/
+_tmp_campaign_probe*/
 
 # Heavy simulation data
 *.h5
