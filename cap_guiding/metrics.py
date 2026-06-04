@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import csv
+import math
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
 from .openpmd_io import open_series, get_iterations, read_field_rz
+
+E_CHARGE_C = 1.602176634e-19  # elementary charge in Coulombs
+M_E_KG = 9.1093837015e-31  # electron mass in kg
+C_M_PER_S = 299792458.0  # speed of light in m/s
 
 
 def moving_average(y: np.ndarray, window_cells: int) -> np.ndarray:
@@ -16,12 +21,28 @@ def moving_average(y: np.ndarray, window_cells: int) -> np.ndarray:
     return np.convolve(y, kernel, mode="same")
 
 
+def eperp_peak_to_a0(Eperp_peak_Vm: float, lambda0_m: float) -> float:
+    """Convert peak transverse electric field to normalized vector potential a0.
+
+    a0 = e E0 / (m_e c omega0), with omega0 = 2*pi*c/lambda0.
+    """
+    if not np.isfinite(Eperp_peak_Vm) or Eperp_peak_Vm <= 0.0:
+        return float("nan")
+
+    if not np.isfinite(lambda0_m) or lambda0_m <= 0.0:
+        return float("nan")
+
+    omega0 = 2.0 * math.pi * C_M_PER_S / lambda0_m
+    return float(E_CHARGE_C * Eperp_peak_Vm / (M_E_KG * C_M_PER_S * omega0))
+
+
 def weighted_laser_metrics(
     Ex_rz: np.ndarray,
     Ey_rz: np.ndarray,
     r_um: np.ndarray,
     z_um: np.ndarray,
     smooth_um: float = 2.0,
+    lambda0_m: float = 0.8e-6,
 ) -> tuple[dict[str, float], np.ndarray]:
     """Compute the laser guiding metrics used in the original F20 analysis.
 
@@ -65,6 +86,9 @@ def weighted_laser_metrics(
     energy_proxy = float(np.sum(I * radial_weight[:, None]) * dr_m * dz_m)
 
     peak_I_proxy = float(np.max(I))
+    Eperp_peak_Vm = float(np.sqrt(peak_I_proxy))
+    a0_peak = eperp_peak_to_a0(Eperp_peak_Vm, lambda0_m=lambda0_m)
+
     front_margin_um = float(z_um.max() - z_peak_um)
     back_margin_um = float(z_peak_um - z_um.min())
 
@@ -74,6 +98,8 @@ def weighted_laser_metrics(
         "back_margin_um": back_margin_um,
         "waist_um": waist_um,
         "peak_I_proxy": peak_I_proxy,
+        "Eperp_peak_Vm": Eperp_peak_Vm,
+        "a0_peak": a0_peak,
         "energy_proxy": energy_proxy,
     }, I_z_smooth
 
@@ -167,6 +193,7 @@ def compute_case_rows(
     smooth_um: float = 2.0,
     wake_behind_um: float = 120.0,
     wake_gap_um: float = 5.0,
+    lambda0_m: float = 0.8e-6,
 ) -> list[dict[str, Any]]:
     """Read one WarpX RZ diagnostic and compute guiding metrics for each dump."""
     ts = open_series(diag)
@@ -190,6 +217,7 @@ def compute_case_rows(
             Ex.r_um,
             Ex.z_um,
             smooth_um=smooth_um,
+            lambda0_m=lambda0_m,
         )
 
         wake = wake_metrics(

@@ -44,6 +44,12 @@ def main() -> None:
     parser.add_argument("--smooth-um", type=float, default=2.0)
     parser.add_argument("--wake-behind-um", type=float, default=120.0)
     parser.add_argument("--wake-gap-um", type=float, default=5.0)
+    parser.add_argument(
+        "--lambda0-m",
+        type=float,
+        default=0.8e-6,
+        help="Laser wavelength [m] used to convert peak transverse E field to a0.",
+    )
 
     parser.add_argument(
         "--overwrite-cases",
@@ -81,6 +87,7 @@ def main() -> None:
     print(f"channel diag      = {args.channel_diag}")
     print(f"uniform diag      = {args.uniform_diag}")
     print(f"vacuum diag       = {args.vacuum_diag}")
+    print(f"lambda0 [m]       = {args.lambda0_m}")
     print(f"case metrics root = {args.case_metrics_root}")
     print(f"triplet outdir    = {outdir}")
     print(f"label             = {args.label}")
@@ -93,6 +100,7 @@ def main() -> None:
         smooth_um=args.smooth_um,
         wake_behind_um=args.wake_behind_um,
         wake_gap_um=args.wake_gap_um,
+        lambda0_m=args.lambda0_m,
         overwrite=args.overwrite_cases,
         make_plots=not args.no_case_plots,
     )
@@ -104,6 +112,7 @@ def main() -> None:
         smooth_um=args.smooth_um,
         wake_behind_um=args.wake_behind_um,
         wake_gap_um=args.wake_gap_um,
+        lambda0_m=args.lambda0_m,
         overwrite=args.overwrite_cases,
         make_plots=not args.no_case_plots,
     )
@@ -115,6 +124,7 @@ def main() -> None:
         smooth_um=args.smooth_um,
         wake_behind_um=args.wake_behind_um,
         wake_gap_um=args.wake_gap_um,
+        lambda0_m=args.lambda0_m,
         overwrite=args.overwrite_cases,
         make_plots=not args.no_case_plots,
     )

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,11 @@ REQUIRED_COLUMNS = [
     "front_margin_um",
 ]
 
+OPTIONAL_COLUMNS = [
+    "Eperp_peak_Vm",
+    "a0_peak",
+]
+
 
 def read_case_csv(path: str | Path, case_type: str) -> pd.DataFrame:
     path = Path(path)
@@ -34,6 +40,10 @@ def read_case_csv(path: str | Path, case_type: str) -> pd.DataFrame:
 
     for col in REQUIRED_COLUMNS:
         df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    for col in OPTIONAL_COLUMNS:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
 
     return df
 
@@ -66,6 +76,14 @@ def add_case_normalizations(df: pd.DataFrame) -> pd.DataFrame:
     df["energy_norm"] = df["energy_proxy"] / energy0
     df["waist_norm"] = df["waist_um"] / waist0
     df["Ez_wake_absmax_GVm"] = df["Ez_wake_absmax"] / 1.0e9
+
+    if "a0_peak" in df.columns:
+        a0_0 = float(df.loc[i0, "a0_peak"])
+        if np.isfinite(a0_0) and a0_0 > 0.0:
+            df["a0_norm"] = df["a0_peak"] / a0_0
+        else:
+            df["a0_norm"] = np.nan
+
     df["ref_iteration"] = int(df.loc[i0, "iteration"])
 
     return df
@@ -136,6 +154,10 @@ def build_wide(aligned: dict[str, pd.DataFrame]) -> pd.DataFrame:
         "front_margin_um",
     ]
 
+    for optional_col in ["Eperp_peak_Vm", "a0_peak", "a0_norm"]:
+        if all(optional_col in aligned[case].columns for case in CASE_ORDER):
+            metric_cols.append(optional_col)
+
     wide = base
 
     for case in CASE_ORDER:
@@ -160,6 +182,8 @@ def build_wide(aligned: dict[str, pd.DataFrame]) -> pd.DataFrame:
         wide[f"Ezabs_{a}_over_{b}"] = (
             wide[f"Ez_wake_absmax_{a}"] / wide[f"Ez_wake_absmax_{b}"]
         )
+        if f"a0_peak_{a}" in wide.columns and f"a0_peak_{b}" in wide.columns:
+            wide[f"a0_{a}_over_{b}"] = wide[f"a0_peak_{a}"] / wide[f"a0_peak_{b}"]
 
     return wide
 
@@ -186,6 +210,52 @@ def nanmedian(series: pd.Series) -> float:
     return float(np.nanmedian(arr))
 
 
+def infer_plateau_window_mm_from_text(text: str) -> tuple[float, float] | None:
+    """Infer plateau start/end positions in mm from case names or paths.
+
+    Current CLPU convention:
+    - longitudinal ramp-up length = 5 mm
+    - plateau length encoded as L5mm, L10mm, L25mm, ...
+    """
+    m = re.search(r"_L(\d+(?:\.\d+)?)mm(?:_|$)", text)
+    if m is None:
+        return None
+
+    plateau_length_mm = float(m.group(1))
+    plateau_start_mm = 5.0
+    plateau_end_mm = plateau_start_mm + plateau_length_mm
+    return plateau_start_mm, plateau_end_mm
+
+
+def infer_plateau_window_mm_from_aligned(
+    aligned: dict[str, pd.DataFrame],
+) -> tuple[float, float] | None:
+    """Infer plateau window from source_csv paths in aligned case dataframes."""
+    windows: list[tuple[float, float]] = []
+
+    for case in CASE_ORDER:
+        df = aligned.get(case)
+        if df is None or "source_csv" not in df.columns or df.empty:
+            continue
+
+        source_csv = str(df["source_csv"].iloc[0])
+        window = infer_plateau_window_mm_from_text(source_csv)
+
+        if window is not None:
+            windows.append(window)
+
+    if not windows:
+        return None
+
+    unique = set(windows)
+    if len(unique) != 1:
+        raise ValueError(
+            f"Inconsistent plateau windows inferred from triplet CSVs: {sorted(unique)}"
+        )
+
+    return windows[0]
+
+
 def build_late_summary(wide: pd.DataFrame, late_fraction: float) -> pd.DataFrame:
     mask = late_mask(wide, late_fraction)
     late = wide.loc[mask].copy()
@@ -193,26 +263,30 @@ def build_late_summary(wide: pd.DataFrame, late_fraction: float) -> pd.DataFrame
     rows: list[dict[str, Any]] = []
 
     for case in CASE_ORDER:
-        rows.append(
-            {
-                "case_type": case,
-                "n_common_dumps": len(wide),
-                "n_late_dumps": len(late),
-                "late_fraction": late_fraction,
-                "propagation_start_mm": float(wide["propagation_mm"].iloc[0]),
-                "propagation_end_mm": float(wide["propagation_mm"].iloc[-1]),
-                "late_start_mm": float(late["propagation_mm"].iloc[0]),
-                "late_end_mm": float(late["propagation_mm"].iloc[-1]),
-                "waist_late_median_um": nanmedian(late[f"waist_um_{case}"]),
-                "waist_norm_late_median": nanmedian(late[f"waist_norm_{case}"]),
-                "peakI_norm_late_median": nanmedian(late[f"peak_I_norm_{case}"]),
-                "energy_norm_late_median": nanmedian(late[f"energy_norm_{case}"]),
-                "Ezabs_late_median_GVm": nanmedian(late[f"Ez_wake_absmax_GVm_{case}"]),
-                "front_margin_late_median_um": nanmedian(
-                    late[f"front_margin_um_{case}"]
-                ),
-            }
-        )
+        row = {
+            "case_type": case,
+            "n_common_dumps": len(wide),
+            "n_late_dumps": len(late),
+            "late_fraction": late_fraction,
+            "propagation_start_mm": float(wide["propagation_mm"].iloc[0]),
+            "propagation_end_mm": float(wide["propagation_mm"].iloc[-1]),
+            "late_start_mm": float(late["propagation_mm"].iloc[0]),
+            "late_end_mm": float(late["propagation_mm"].iloc[-1]),
+            "waist_late_median_um": nanmedian(late[f"waist_um_{case}"]),
+            "waist_norm_late_median": nanmedian(late[f"waist_norm_{case}"]),
+            "peakI_norm_late_median": nanmedian(late[f"peak_I_norm_{case}"]),
+            "energy_norm_late_median": nanmedian(late[f"energy_norm_{case}"]),
+            "Ezabs_late_median_GVm": nanmedian(late[f"Ez_wake_absmax_GVm_{case}"]),
+            "front_margin_late_median_um": nanmedian(late[f"front_margin_um_{case}"]),
+        }
+
+        if f"a0_peak_{case}" in late.columns:
+            row["a0_peak_late_median"] = nanmedian(late[f"a0_peak_{case}"])
+
+        if f"a0_norm_{case}" in late.columns:
+            row["a0_norm_late_median"] = nanmedian(late[f"a0_norm_{case}"])
+
+        rows.append(row)
 
     return pd.DataFrame(rows)
 
@@ -244,6 +318,14 @@ def build_late_ratios(wide: pd.DataFrame, late_fraction: float) -> pd.DataFrame:
     for col in ratio_cols:
         row[f"{col}_late_median"] = nanmedian(late[col])
 
+    for col in [
+        "a0_channel_over_vacuum",
+        "a0_uniform_over_vacuum",
+        "a0_channel_over_uniform",
+    ]:
+        if col in late.columns:
+            row[f"{col}_late_median"] = nanmedian(late[col])
+
     row["optical_guiding_peakI_gain_ch_over_uni"] = row[
         "peakI_channel_over_uniform_late_median"
     ]
@@ -270,8 +352,14 @@ def build_triplet_tables(
 
     aligned = align_common_iterations(cases)
 
+    plateau_window_mm = infer_plateau_window_mm_from_aligned(aligned)
+
     long = build_long(aligned)
     wide = build_wide(aligned)
+
+    if plateau_window_mm is not None:
+        wide.attrs["plateau_window_mm"] = plateau_window_mm
+
     late_summary = build_late_summary(wide, late_fraction)
     late_ratios = build_late_ratios(wide, late_fraction)
 

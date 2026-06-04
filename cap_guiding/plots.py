@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,119 @@ from .metrics import first_valid_laser_index
 
 def _arr(rows: list[dict[str, Any]], key: str) -> np.ndarray:
     return np.array([r[key] for r in rows], dtype=float)
+
+
+def draw_plateau_window(
+    ax,
+    plateau_window_mm: tuple[float, float] | None,
+    labels: bool = False,
+) -> None:
+    """Draw plateau start/end vertical markers on an existing matplotlib axis."""
+    if plateau_window_mm is None:
+        return
+
+    plateau_start_mm, plateau_end_mm = plateau_window_mm
+
+    ax.axvline(
+        plateau_start_mm,
+        linestyle=":",
+        linewidth=1.2,
+        alpha=0.9,
+    )
+    ax.axvline(
+        plateau_end_mm,
+        linestyle=":",
+        linewidth=1.2,
+        alpha=0.9,
+    )
+
+    if labels:
+        ax.text(
+            plateau_start_mm,
+            0.02,
+            " plateau start",
+            transform=ax.get_xaxis_transform(),
+            va="bottom",
+            ha="left",
+            fontsize=8,
+        )
+        ax.text(
+            plateau_end_mm,
+            0.02,
+            " plateau end",
+            transform=ax.get_xaxis_transform(),
+            va="bottom",
+            ha="left",
+            fontsize=8,
+        )
+
+
+def infer_plateau_window_mm_from_name(name: str) -> tuple[float, float] | None:
+    """Infer plateau start/end positions in mm from a case/output name.
+
+    Convention used in current campaigns:
+    - ramp-up always starts at z = 0 mm and ends at z = 5 mm
+    - plateau length is encoded as L5mm, L10mm, L25mm, etc.
+    - therefore:
+        plateau_start_mm = 5.0
+        plateau_end_mm = 5.0 + plateau_length_mm
+    """
+    m = re.search(r"_L(\d+(?:\.\d+)?)mm_", name)
+    if m is None:
+        m = re.search(r"_L(\d+(?:\.\d+)?)mm($|_)", name)
+
+    if m is None:
+        return None
+
+    plateau_length_mm = float(m.group(1))
+    plateau_start_mm = 5.0
+    plateau_end_mm = plateau_start_mm + plateau_length_mm
+    return plateau_start_mm, plateau_end_mm
+
+
+def draw_plateau_window(
+    ax,
+    plateau_window_mm: tuple[float, float] | None,
+    labels: bool = False,
+) -> None:
+    """Draw vertical markers for plateau start/end on an existing axis."""
+    if plateau_window_mm is None:
+        return
+
+    plateau_start_mm, plateau_end_mm = plateau_window_mm
+
+    ax.axvline(
+        plateau_start_mm,
+        linestyle=":",
+        linewidth=1.2,
+        alpha=0.9,
+    )
+    ax.axvline(
+        plateau_end_mm,
+        linestyle=":",
+        linewidth=1.2,
+        alpha=0.9,
+    )
+
+    if labels:
+        ax.text(
+            plateau_start_mm,
+            0.02,
+            " plateau start",
+            transform=ax.get_xaxis_transform(),
+            va="bottom",
+            ha="left",
+            fontsize=8,
+        )
+        ax.text(
+            plateau_end_mm,
+            0.02,
+            " plateau end",
+            transform=ax.get_xaxis_transform(),
+            va="bottom",
+            ha="left",
+            fontsize=8,
+        )
 
 
 def _detect_breakdown(
@@ -55,6 +169,8 @@ def save_case_plots(rows: list[dict[str, Any]], outdir: str | Path) -> None:
     plots = outdir / "plots"
     plots.mkdir(parents=True, exist_ok=True)
 
+    plateau_window_mm = infer_plateau_window_mm_from_name(outdir.name)
+
     propagation_mm = _arr(rows, "propagation_mm")
     z_peak = _arr(rows, "z_peak_um")
     waist = _arr(rows, "waist_um")
@@ -62,6 +178,12 @@ def save_case_plots(rows: list[dict[str, Any]], outdir: str | Path) -> None:
     peak_I = _arr(rows, "peak_I_proxy")
     energy = _arr(rows, "energy_proxy")
     Ez_abs = _arr(rows, "Ez_wake_absmax")
+
+    has_a0 = "a0_peak" in rows[0]
+    if has_a0:
+        a0_peak = _arr(rows, "a0_peak")
+    else:
+        a0_peak = None
     z_Ez_rel = _arr(rows, "z_Ez_absmax_rel_um")
 
     ref = first_valid_laser_index(rows)
@@ -79,6 +201,15 @@ def save_case_plots(rows: list[dict[str, Any]], outdir: str | Path) -> None:
     energy_norm = np.full_like(energy, np.nan, dtype=float)
     peak_I_norm[valid] = peak_I[valid] / peak_I[ref]
     energy_norm[valid] = energy[valid] / energy[ref]
+
+    if has_a0:
+        a0_norm = np.full_like(a0_peak, np.nan, dtype=float)
+        if np.isfinite(a0_peak[ref]) and a0_peak[ref] > 0.0:
+            a0_norm[valid] = a0_peak[valid] / a0_peak[ref]
+        else:
+            a0_norm[:] = np.nan
+    else:
+        a0_norm = None
 
     _, breakdown_mm, breakdown_iteration = _detect_breakdown(rows)
     if breakdown_mm is not None:
@@ -102,10 +233,11 @@ def save_case_plots(rows: list[dict[str, Any]], outdir: str | Path) -> None:
                 fontsize=8,
             )
 
-    def save_plot(y, ylabel: str, name: str, hlines=None):
+    def save_plot(y, ylabel, name, hlines=None):
         fig, ax = plt.subplots(figsize=(7, 4))
         ax.plot(propagation_mm, y, marker="o", markersize=3)
         add_breakdown_marker(ax)
+        draw_plateau_window(ax, plateau_window_mm, labels=True)
 
         if hlines:
             for value, label in hlines:
@@ -137,11 +269,13 @@ def save_case_plots(rows: list[dict[str, Any]], outdir: str | Path) -> None:
         hlines=[(20.0, "20 um"), (30.0, "30 um"), (50.0, "50 um")],
     )
     save_plot(waist, "laser waist rms [um]", "laser_waist_rms.png")
-    save_plot(
-        peak_I_norm,
-        f"peak I proxy / dump {ref_iteration}",
-        "laser_peak_I_proxy_norm.png",
-    )
+    if has_a0:
+        save_plot(a0_peak, "laser peak a0", "laser_a0_peak.png")
+        save_plot(
+            a0_norm,
+            f"peak a0 / dump {ref_iteration}",
+            "laser_a0_norm.png",
+        )
     save_plot(
         energy_norm,
         f"energy proxy / dump {ref_iteration}",
@@ -160,7 +294,12 @@ def save_case_plots(rows: list[dict[str, Any]], outdir: str | Path) -> None:
     panels = [
         (front_margin, "front margin [um]"),
         (waist, "laser waist rms [um]"),
-        (peak_I_norm, f"peak I / dump {ref_iteration}"),
+        (
+            a0_norm if has_a0 else peak_I_norm,
+            f"a0 / dump {ref_iteration}"
+            if has_a0
+            else f"peak I / dump {ref_iteration}",
+        ),
         (energy_norm, f"energy / dump {ref_iteration}"),
         (Ez_abs / 1.0e9, "max |Ez wake| [GV/m]"),
         (z_Ez_rel, "z(Ez absmax) - z_peak [um]"),
@@ -169,6 +308,7 @@ def save_case_plots(rows: list[dict[str, Any]], outdir: str | Path) -> None:
     for ax, (y, label) in zip(axs, panels):
         ax.plot(propagation_mm, y, marker="o", markersize=3)
         add_breakdown_marker(ax)
+        draw_plateau_window(ax, plateau_window_mm, labels=False)
         ax.set_ylabel(label)
         ax.grid(True, alpha=0.25)
 
@@ -191,6 +331,7 @@ def save_triplet_line_plot(
     title: str,
     path: str | Path,
     hline: float | None = None,
+    plateau_window_mm: tuple[float, float] | None = None,
 ) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -204,6 +345,8 @@ def save_triplet_line_plot(
 
     if hline is not None:
         ax.axhline(hline, linestyle="--", linewidth=1)
+
+    draw_plateau_window(ax, plateau_window_mm, labels=True)
 
     ax.set_xlabel("propagation distance [mm]")
     ax.set_ylabel(ylabel)
@@ -222,6 +365,8 @@ def save_triplet_plots(wide, outdir: str | Path) -> None:
     outdir = Path(outdir)
     plots = outdir / "plots"
     plots.mkdir(parents=True, exist_ok=True)
+
+    plateau_window_mm = wide.attrs.get("plateau_window_mm")
 
     case_order = ["channel", "uniform", "vacuum"]
 
@@ -296,6 +441,32 @@ def save_triplet_plots(wide, outdir: str | Path) -> None:
         hline=1.0,
     )
 
+    has_a0_triplet = all(f"a0_peak_{c}" in wide.columns for c in case_order)
+
+    if has_a0_triplet:
+        save_triplet_line_plot(
+            wide,
+            [(f"a0_peak_{c}", c) for c in case_order],
+            "peak a0",
+            "Peak a0 comparison",
+            plots / "a0_peak_comparison.png",
+        )
+
+        save_triplet_line_plot(
+            wide,
+            [
+                ("a0_channel_over_vacuum", "channel/vacuum"),
+                ("a0_uniform_over_vacuum", "uniform/vacuum"),
+                ("a0_channel_over_uniform", "channel/uniform"),
+            ],
+            "a0 ratio",
+            "Peak a0 ratios",
+            plots / "a0_ratios.png",
+            hline=1.0,
+        )
+    else:
+        has_a0_triplet = False
+
     fig, axs = plt.subplots(2, 2, figsize=(11, 8), sharex=True)
 
     panels = [
@@ -306,9 +477,13 @@ def save_triplet_plots(wide, outdir: str | Path) -> None:
             None,
         ),
         (
-            [(f"peak_I_norm_{c}", c) for c in case_order],
-            "peak I / first valid dump",
-            "Peak intensity",
+            (
+                [(f"a0_norm_{c}", c) for c in case_order]
+                if has_a0_triplet
+                else [(f"peak_I_norm_{c}", c) for c in case_order]
+            ),
+            "a0 / first valid dump" if has_a0_triplet else "peak I / first valid dump",
+            "Peak a0" if has_a0_triplet else "Peak intensity",
             None,
         ),
         (
@@ -318,9 +493,15 @@ def save_triplet_plots(wide, outdir: str | Path) -> None:
             1.0,
         ),
         (
-            [("peakI_channel_over_uniform", "peak I channel/uniform")],
+            (
+                [("a0_channel_over_uniform", "a0 channel/uniform")]
+                if has_a0_triplet
+                else [("peakI_channel_over_uniform", "peak I channel/uniform")]
+            ),
             "ratio",
-            "Channel vs uniform: peak I",
+            "Channel vs uniform: a0"
+            if has_a0_triplet
+            else "Channel vs uniform: peak I",
             1.0,
         ),
     ]
@@ -338,6 +519,12 @@ def save_triplet_plots(wide, outdir: str | Path) -> None:
 
         if hline is not None:
             ax.axhline(hline, linestyle="--", linewidth=1)
+
+        draw_plateau_window(
+            ax,
+            wide.attrs.get("plateau_window_mm"),
+            labels=False,
+        )
 
         ax.set_ylabel(ylabel)
         ax.set_title(title)

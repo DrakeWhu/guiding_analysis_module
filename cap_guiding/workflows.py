@@ -24,6 +24,7 @@ def ensure_case_metrics(
     smooth_um: float = 2.0,
     wake_behind_um: float = 120.0,
     wake_gap_um: float = 5.0,
+    lambda0_m: float = 0.8e-6,
     overwrite: bool = False,
     make_plots: bool = True,
 ) -> Path:
@@ -51,6 +52,7 @@ def ensure_case_metrics(
         smooth_um=smooth_um,
         wake_behind_um=wake_behind_um,
         wake_gap_um=wake_gap_um,
+        lambda0_m=lambda0_m,
     )
 
     write_case_csv(rows, csv_path)

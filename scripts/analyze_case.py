@@ -32,6 +32,12 @@ def main() -> None:
     parser.add_argument("--wake-behind-um", type=float, default=120.0)
     parser.add_argument("--wake-gap-um", type=float, default=5.0)
     parser.add_argument(
+        "--lambda0-m",
+        type=float,
+        default=0.8e-6,
+        help="Laser wavelength [m] used to convert peak transverse E field to a0.",
+    )
+    parser.add_argument(
         "--skip-existing",
         action="store_true",
         help="Skip if guiding_metrics.csv already exists.",
@@ -70,6 +76,7 @@ def main() -> None:
     print(f"smooth_um      = {args.smooth_um}")
     print(f"wake_behind_um = {args.wake_behind_um}")
     print(f"wake_gap_um    = {args.wake_gap_um}")
+    print(f"lambda0_m      = {args.lambda0_m}")
     print("=======================================")
 
     rows = compute_case_rows(
@@ -78,6 +85,7 @@ def main() -> None:
         smooth_um=args.smooth_um,
         wake_behind_um=args.wake_behind_um,
         wake_gap_um=args.wake_gap_um,
+        lambda0_m=args.lambda0_m,
     )
 
     write_case_csv(rows, csv_path)
