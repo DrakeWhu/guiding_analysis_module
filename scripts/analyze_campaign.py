@@ -5,6 +5,8 @@ import argparse
 import sys
 from pathlib import Path
 
+import pandas as pd
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -19,12 +21,54 @@ from cap_guiding.campaign import (
     write_campaign_report,
 )
 from cap_guiding.plots import save_triplet_plots
-from cap_guiding.triplet import build_triplet_tables, write_triplet_tables
+from cap_guiding.triplet import (
+    REQUIRED_COLUMNS,
+    build_triplet_tables,
+    write_triplet_tables,
+)
 from cap_guiding.workflows import ensure_case_metrics
 
 
 def _case_metrics_path(case_metrics_root: Path, case_id: str) -> Path:
     return case_metrics_root / case_id / "guiding_metrics.csv"
+
+
+def _case_metrics_is_valid(path: Path) -> bool:
+    """Return True if guiding_metrics.csv exists and has at least one valid row."""
+    if not path.is_file():
+        return False
+
+    try:
+        df = pd.read_csv(path, nrows=1)
+    except Exception:
+        return False
+
+    if df.empty:
+        return False
+
+    missing = [col for col in REQUIRED_COLUMNS if col not in df.columns]
+    return not missing
+
+
+def _case_has_valid_metrics(case_metrics_root: Path, case_id: str) -> bool:
+    return _case_metrics_is_valid(_case_metrics_path(case_metrics_root, case_id))
+
+
+def _triplet_csv_paths(case_metrics_root: Path, triplet):
+    assert triplet.channel is not None
+    assert triplet.uniform is not None
+    assert triplet.vacuum is not None
+
+    return {
+        "channel": _case_metrics_path(case_metrics_root, triplet.channel.case_id),
+        "uniform": _case_metrics_path(case_metrics_root, triplet.uniform.case_id),
+        "vacuum": _case_metrics_path(case_metrics_root, triplet.vacuum.case_id),
+    }
+
+
+def _triplet_has_valid_metrics(case_metrics_root: Path, triplet) -> bool:
+    paths = _triplet_csv_paths(case_metrics_root, triplet)
+    return all(_case_metrics_is_valid(path) for path in paths.values())
 
 
 def main() -> None:
@@ -138,6 +182,46 @@ def main() -> None:
         )
     ]
 
+    cases_with_valid_metrics = [
+        case
+        for case in cases
+        if _case_has_valid_metrics(case_metrics_root, case.case_id)
+    ]
+
+    cases_usable = [
+        case
+        for case in cases
+        if _case_has_valid_metrics(case_metrics_root, case.case_id)
+        or case_is_ready(
+            case,
+            min_h5=args.min_h5,
+            min_last_h5_age_min=args.min_last_h5_age_min,
+        )
+    ]
+
+    triplets_csv_complete = [
+        triplet
+        for triplet in complete
+        if _triplet_has_valid_metrics(case_metrics_root, triplet)
+    ]
+
+    triplets_usable = [
+        triplet
+        for triplet in complete
+        if all(
+            case is not None
+            and (
+                _case_has_valid_metrics(case_metrics_root, case.case_id)
+                or case_is_ready(
+                    case,
+                    min_h5=args.min_h5,
+                    min_last_h5_age_min=args.min_last_h5_age_min,
+                )
+            )
+            for case in [triplet.channel, triplet.uniform, triplet.vacuum]
+        )
+    ]
+
     insufficient_cases = [case for case in cases if case.h5_count < args.min_h5]
 
     unstable_cases = [
@@ -168,6 +252,10 @@ def main() -> None:
     print(f"triplets structural complete = {len(complete)}")
     print(f"triplets ready min_h5        = {len(ready_min_h5)}")
     print(f"triplets ready for analysis  = {len(ready_for_analysis)}")
+    print(f"cases with valid CSV metrics = {len(cases_with_valid_metrics)}")
+    print(f"cases usable CSV or HDF5     = {len(cases_usable)}")
+    print(f"triplets CSV complete        = {len(triplets_csv_complete)}")
+    print(f"triplets usable CSV or HDF5  = {len(triplets_usable)}")
     print(f"triplets incomplete          = {len(incomplete)}")
     print(f"cases insufficient h5        = {len(insufficient_cases)}")
     print(f"cases unstable h5 age        = {len(unstable_cases)}")
@@ -183,6 +271,20 @@ def main() -> None:
 
     if args.run_cases:
         for case in cases:
+            csv_path = _case_metrics_path(case_metrics_root, case.case_id)
+            csv_valid = _case_metrics_is_valid(csv_path)
+
+            if csv_valid and not args.overwrite_cases:
+                print(f"[USE] valid existing case metrics: {csv_path}")
+                continue
+
+            if csv_path.exists() and not csv_valid and not args.overwrite_cases:
+                print(
+                    f"[SKIP] existing INVALID case metrics, "
+                    f"use --overwrite-cases to regenerate: {csv_path}"
+                )
+                continue
+
             if not case_is_ready(
                 case,
                 min_h5=args.min_h5,
@@ -197,12 +299,6 @@ def main() -> None:
                     f"min_last_h5_age_min={args.min_last_h5_age_min}): "
                     f"{case.case_id}"
                 )
-                continue
-
-            csv_path = _case_metrics_path(case_metrics_root, case.case_id)
-
-            if csv_path.exists() and args.skip_existing and not args.overwrite_cases:
-                print(f"[SKIP] existing case metrics: {csv_path}")
                 continue
 
             ensure_case_metrics(
@@ -226,17 +322,26 @@ def main() -> None:
 
             members = [triplet.channel, triplet.uniform, triplet.vacuum]
 
-            if not triplet_is_ready(
-                triplet,
-                min_h5=args.min_h5,
-                min_last_h5_age_min=args.min_last_h5_age_min,
-            ):
+            csv_paths = _triplet_csv_paths(case_metrics_root, triplet)
+
+            channel_csv = csv_paths["channel"]
+            uniform_csv = csv_paths["uniform"]
+            vacuum_csv = csv_paths["vacuum"]
+
+            invalid_csv = [
+                path
+                for path in [channel_csv, uniform_csv, vacuum_csv]
+                if not _case_metrics_is_valid(path)
+            ]
+
+            if invalid_csv:
                 print(
-                    f"[SKIP] triplet not ready "
-                    f"(min_h5={args.min_h5}, "
-                    f"min_last_h5_age_min={args.min_last_h5_age_min}): "
-                    f"{triplet.label}"
+                    f"[SKIP] missing/invalid case metrics for triplet {triplet.label}:"
                 )
+                for path in invalid_csv:
+                    print(f"       - {path}")
+
+                print("       HDF5 status:")
                 for case in members:
                     age = newest_h5_age_min(case.diag_dir)
                     age_text = "none" if age is None else f"{age:.2f} min"
@@ -244,22 +349,7 @@ def main() -> None:
                         f"       - {case.case_id}: "
                         f"h5={case.h5_count}, newest_h5_age={age_text}"
                     )
-                continue
 
-            channel_csv = _case_metrics_path(case_metrics_root, triplet.channel.case_id)
-            uniform_csv = _case_metrics_path(case_metrics_root, triplet.uniform.case_id)
-            vacuum_csv = _case_metrics_path(case_metrics_root, triplet.vacuum.case_id)
-
-            missing_csv = [
-                path
-                for path in [channel_csv, uniform_csv, vacuum_csv]
-                if not path.is_file()
-            ]
-
-            if missing_csv:
-                print(f"[SKIP] missing case metrics for triplet {triplet.label}:")
-                for path in missing_csv:
-                    print(f"       - {path}")
                 continue
 
             triplet_outdir = triplets_root / triplet.label
