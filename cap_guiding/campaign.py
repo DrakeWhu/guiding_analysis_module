@@ -19,7 +19,11 @@ _PLATEAU_RE = re.compile(
     re.IGNORECASE,
 )
 _FOCUS_RE = re.compile(
-    r"(?:^|_)foc(?P<focus>[mp]?\d+(?:[p.]\d+)?)um(?:_|$)",
+    r"(?:^|_)foc(?P<focus>[mp]?\d+(?:[p.]\d+)?)(?P<focus_unit>um|mm)(?:_|$)",
+    re.IGNORECASE,
+)
+_DIAMETER_RE = re.compile(
+    r"(?:^|_)d(?P<diameter>\d+(?:[p.]\d+)?)um(?:_|$)",
     re.IGNORECASE,
 )
 
@@ -36,6 +40,7 @@ class CaseInfo:
     ref_density: str | None
     plateau: str | None
     focus: str | None
+    diameter: str | None
     source: str
 
     @property
@@ -71,11 +76,13 @@ class TripletInfo:
     @property
     def label(self) -> str:
         fnum, plateau, focus, density = self.key
+        diameter = self.channel.diameter if self.channel is not None else None
         parts = [
             f"f{fnum}" if fnum is not None else None,
             f"n{density}" if density is not None else None,
             f"L{plateau}mm" if plateau is not None else None,
-            f"foc{focus}um" if focus is not None else None,
+            f"d{diameter}um" if diameter is not None else None,
+            f"foc{focus}" if focus is not None else None,
         ]
         return "_".join(p for p in parts if p is not None)
 
@@ -91,6 +98,19 @@ def _first_match(regex: re.Pattern[str], text: str, group: str) -> str | None:
     if match is None:
         return None
     return _norm_token(match.group(group))
+
+
+def _first_focus_match(text: str) -> str | None:
+    match = _FOCUS_RE.search(text)
+    if match is None:
+        return None
+
+    focus = _norm_token(match.group("focus"))
+    unit = _norm_token(match.group("focus_unit"))
+    if focus is None or unit is None:
+        return None
+
+    return f"{focus}{unit}"
 
 
 def infer_case_type(case_id: str) -> str | None:
@@ -222,7 +242,8 @@ def infer_case_info_from_dir(
         density=_first_match(_DENSITY_RE, case_id, "density"),
         ref_density=_first_match(_REF_DENSITY_RE, case_id, "density"),
         plateau=_first_match(_PLATEAU_RE, case_id, "plateau"),
-        focus=_first_match(_FOCUS_RE, case_id, "focus"),
+        focus=_first_focus_match(case_id),
+        diameter=_first_match(_DIAMETER_RE, case_id, "diameter"),
         source=source,
     )
 
@@ -387,6 +408,7 @@ def load_cases_from_cases_full(campaign_root: str | Path) -> list[CaseInfo]:
                 ref_density=inferred.ref_density,
                 plateau=inferred.plateau,
                 focus=inferred.focus,
+                diameter=inferred.diameter,
                 source="cases_full.tsv",
             )
         )
@@ -522,6 +544,7 @@ def write_campaign_report(
             "ref_density",
             "plateau",
             "focus",
+            "diameter",
             "source",
         ]
 
@@ -553,6 +576,7 @@ def write_campaign_report(
                     "ref_density": case.ref_density,
                     "plateau": case.plateau,
                     "focus": case.focus,
+                    "diameter": case.diameter,
                     "source": case.source,
                 }
             )
