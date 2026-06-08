@@ -20,13 +20,19 @@ from cap_guiding.campaign import (
     triplet_ready_min_h5,
     write_campaign_report,
 )
-from cap_guiding.plots import save_triplet_plots
+from cap_guiding.plots import save_case_plots, save_triplet_plots
 from cap_guiding.triplet import (
     REQUIRED_COLUMNS,
     build_triplet_tables,
     write_triplet_tables,
 )
 from cap_guiding.workflows import ensure_case_metrics
+
+CASE_PLOT_REQUIRED_COLUMNS = [
+    *REQUIRED_COLUMNS,
+    "z_peak_um",
+    "z_Ez_absmax_rel_um",
+]
 
 
 def _case_metrics_path(case_metrics_root: Path, case_id: str) -> Path:
@@ -48,6 +54,19 @@ def _case_metrics_is_valid(path: Path) -> bool:
 
     missing = [col for col in REQUIRED_COLUMNS if col not in df.columns]
     return not missing
+
+
+def _read_case_metrics_rows_for_plots(path: Path) -> list[dict]:
+    df = pd.read_csv(path)
+
+    if df.empty:
+        raise ValueError(f"{path} is empty")
+
+    missing = [col for col in CASE_PLOT_REQUIRED_COLUMNS if col not in df.columns]
+    if missing:
+        raise ValueError(f"{path} is missing plot columns: {missing}")
+
+    return df.to_dict(orient="records")
 
 
 def _case_has_valid_metrics(case_metrics_root: Path, case_id: str) -> bool:
@@ -142,6 +161,19 @@ def main() -> None:
     parser.add_argument("--lambda0-m", type=float, default=0.8e-6)
     parser.add_argument("--late-fraction", type=float, default=1.0 / 3.0)
     parser.add_argument("--no-case-plots", action="store_true")
+    parser.add_argument(
+        "--plot-existing-cases",
+        action="store_true",
+        help=(
+            "Generate case plots from valid existing guiding_metrics.csv files. "
+            "This does not read WarpX/openPMD HDF5 diagnostics."
+        ),
+    )
+    parser.add_argument(
+        "--overwrite-case-plots",
+        action="store_true",
+        help="Regenerate plots even if the case plot sentinel already exists.",
+    )
     parser.add_argument("--no-triplet-plots", action="store_true")
 
     args = parser.parse_args()
@@ -266,7 +298,7 @@ def main() -> None:
         print(f"  - {path}")
     print("===============================")
 
-    if not args.run_cases and not args.run_triplets:
+    if not args.run_cases and not args.run_triplets and not args.plot_existing_cases:
         return
 
     if args.run_cases:
@@ -313,6 +345,39 @@ def main() -> None:
                 overwrite=args.overwrite_cases,
                 make_plots=not args.no_case_plots,
             )
+
+    if args.plot_existing_cases:
+        for case in cases:
+            csv_path = _case_metrics_path(case_metrics_root, case.case_id)
+
+            if not _case_metrics_is_valid(csv_path):
+                print(f"[SKIP] missing/invalid case metrics for plots: {csv_path}")
+                continue
+
+            case_outdir = csv_path.parent
+            sentinel = case_outdir / "plots" / "guiding_summary_multipanel.png"
+
+            if (
+                sentinel.exists()
+                and args.skip_existing
+                and not args.overwrite_case_plots
+            ):
+                print(f"[SKIP] existing case plots: {sentinel.parent}")
+                continue
+
+            if sentinel.exists() and not args.overwrite_case_plots:
+                print(
+                    f"[SKIP] existing case plots, use --overwrite-case-plots: "
+                    f"{sentinel.parent}"
+                )
+                continue
+
+            try:
+                rows = _read_case_metrics_rows_for_plots(csv_path)
+                save_case_plots(rows, case_outdir)
+            except Exception as exc:
+                print(f"[FAIL] case plots {case.case_id}: {exc}")
+                continue
 
     if args.run_triplets:
         for triplet in complete:
