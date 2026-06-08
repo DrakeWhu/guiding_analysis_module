@@ -238,3 +238,182 @@ def score_case_csv(
         "weight_waist_growth": cfg.weight_waist_growth,
         "weight_waist_stability": cfg.weight_waist_stability,
     }
+
+
+@dataclass(frozen=True)
+class TripletScoreConfig:
+    reference_deadband: float = 5.0
+    reference_scale: float = 15.0
+
+
+def _safe_ratio(numerator: float, denominator: float) -> float:
+    if not np.isfinite(numerator) or not np.isfinite(denominator):
+        return float("nan")
+    if denominator == 0.0:
+        return float("nan")
+    return float(numerator / denominator)
+
+
+def _signed_deadband(delta: float, deadband: float) -> float:
+    """Remove a symmetric deadband around zero while preserving sign."""
+    if not np.isfinite(delta):
+        return float("nan")
+
+    abs_delta = abs(delta)
+    if abs_delta <= deadband:
+        return 0.0
+
+    return float(np.sign(delta) * (abs_delta - deadband))
+
+
+def reference_factor_from_delta(
+    delta: float,
+    *,
+    deadband: float = 5.0,
+    scale: float = 15.0,
+) -> float:
+    """Map channel-reference score difference to [-1, 1].
+
+    Positive means the channel beats the best reference.
+    Near zero means the channel is indistinguishable from the references.
+    Negative means a reference beats the channel.
+    """
+    if not np.isfinite(delta):
+        return float("nan")
+
+    if scale <= 0.0:
+        raise ValueError("scale must be positive")
+
+    effective_delta = _signed_deadband(delta, deadband)
+    return float(np.tanh(effective_delta / scale))
+
+
+def score_triplet_csvs(
+    *,
+    channel_csv: str | Path,
+    uniform_csv: str | Path,
+    vacuum_csv: str | Path,
+    channel_case_id: str | None = None,
+    uniform_case_id: str | None = None,
+    vacuum_case_id: str | None = None,
+    case_config: ScoreConfig | None = None,
+    triplet_config: TripletScoreConfig | None = None,
+) -> dict[str, Any]:
+    """Compute a reference-aware guiding score for one channel/uniform/vacuum triplet.
+
+    The final score is positive only when the channel beats both references.
+    If the channel is similar to the best reference, the final score is near zero.
+    If either uniform or vacuum beats the channel, the final score is negative.
+    """
+
+    tcfg = triplet_config or TripletScoreConfig()
+
+    channel = score_case_csv(
+        channel_csv,
+        case_id=channel_case_id,
+        config=case_config,
+    )
+    uniform = score_case_csv(
+        uniform_csv,
+        case_id=uniform_case_id,
+        config=case_config,
+    )
+    vacuum = score_case_csv(
+        vacuum_csv,
+        case_id=vacuum_case_id,
+        config=case_config,
+    )
+
+    base: dict[str, Any] = {
+        "status": "failed",
+        "failure_reason": "",
+        "channel_case_id": channel.get("case_id"),
+        "uniform_case_id": uniform.get("case_id"),
+        "vacuum_case_id": vacuum.get("case_id"),
+        "score_channel": channel.get("score", float("nan")),
+        "score_uniform": uniform.get("score", float("nan")),
+        "score_vacuum": vacuum.get("score", float("nan")),
+        "final_score": float("nan"),
+    }
+
+    failed = []
+    for name, result in [
+        ("channel", channel),
+        ("uniform", uniform),
+        ("vacuum", vacuum),
+    ]:
+        if result.get("status") != "ok":
+            failed.append(f"{name}: {result.get('failure_reason', 'unknown')}")
+
+    if failed:
+        return {
+            **base,
+            "failure_reason": "; ".join(failed),
+        }
+
+    score_channel = float(channel["score"])
+    score_uniform = float(uniform["score"])
+    score_vacuum = float(vacuum["score"])
+
+    if score_uniform >= score_vacuum:
+        reference_kind = "uniform"
+        reference_score = score_uniform
+    else:
+        reference_kind = "vacuum"
+        reference_score = score_vacuum
+
+    score_delta_vs_reference = score_channel - reference_score
+    score_delta_vs_uniform = score_channel - score_uniform
+    score_delta_vs_vacuum = score_channel - score_vacuum
+
+    reference_factor = reference_factor_from_delta(
+        score_delta_vs_reference,
+        deadband=tcfg.reference_deadband,
+        scale=tcfg.reference_scale,
+    )
+
+    final_score = score_channel * reference_factor
+
+    return {
+        **base,
+        "status": "ok",
+        "failure_reason": "",
+        "reference_kind": reference_kind,
+        "reference_score": reference_score,
+        "score_delta_vs_reference": score_delta_vs_reference,
+        "score_delta_vs_uniform": score_delta_vs_uniform,
+        "score_delta_vs_vacuum": score_delta_vs_vacuum,
+        "reference_factor": reference_factor,
+        "reference_deadband": tcfg.reference_deadband,
+        "reference_scale": tcfg.reference_scale,
+        "final_score": final_score,
+        # Useful physical diagnostics for inspection.
+        "a0_exit_channel": channel.get("a0_exit", float("nan")),
+        "a0_exit_uniform": uniform.get("a0_exit", float("nan")),
+        "a0_exit_vacuum": vacuum.get("a0_exit", float("nan")),
+        "a0_exit_channel_over_uniform": _safe_ratio(
+            float(channel.get("a0_exit", float("nan"))),
+            float(uniform.get("a0_exit", float("nan"))),
+        ),
+        "a0_exit_channel_over_vacuum": _safe_ratio(
+            float(channel.get("a0_exit", float("nan"))),
+            float(vacuum.get("a0_exit", float("nan"))),
+        ),
+        "waist_growth_channel": channel.get("waist_growth", float("nan")),
+        "waist_growth_uniform": uniform.get("waist_growth", float("nan")),
+        "waist_growth_vacuum": vacuum.get("waist_growth", float("nan")),
+        "waist_growth_channel_over_uniform": _safe_ratio(
+            float(channel.get("waist_growth", float("nan"))),
+            float(uniform.get("waist_growth", float("nan"))),
+        ),
+        "waist_growth_channel_over_vacuum": _safe_ratio(
+            float(channel.get("waist_growth", float("nan"))),
+            float(vacuum.get("waist_growth", float("nan"))),
+        ),
+        "a0_retention_channel": channel.get("a0_exit_over_analysis_max", float("nan")),
+        "a0_retention_uniform": uniform.get("a0_exit_over_analysis_max", float("nan")),
+        "a0_retention_vacuum": vacuum.get("a0_exit_over_analysis_max", float("nan")),
+        "valid_fraction_channel": channel.get("valid_fraction", float("nan")),
+        "valid_fraction_uniform": uniform.get("valid_fraction", float("nan")),
+        "valid_fraction_vacuum": vacuum.get("valid_fraction", float("nan")),
+    }
