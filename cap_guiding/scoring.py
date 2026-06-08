@@ -245,6 +245,13 @@ class TripletScoreConfig:
     reference_deadband: float = 5.0
     reference_scale: float = 15.0
 
+    # Local multiplicative factor based on direct channel/reference comparison.
+    # These are logarithmic: log(1.05) means a 5% deadband.
+    reference_deadband_log: float = float(np.log(1.05))
+    reference_scale_log: float = float(np.log(1.5))
+    reference_a0_weight: float = 0.80
+    reference_waist_weight: float = 0.20
+
 
 def _safe_ratio(numerator: float, denominator: float) -> float:
     if not np.isfinite(numerator) or not np.isfinite(denominator):
@@ -286,6 +293,50 @@ def reference_factor_from_delta(
 
     effective_delta = _signed_deadband(delta, deadband)
     return float(np.tanh(effective_delta / scale))
+
+
+def reference_factor_from_local_advantage(
+    *,
+    a0_log_advantage: float,
+    waist_log_advantage: float,
+    deadband_log: float,
+    scale_log: float,
+    a0_weight: float,
+    waist_weight: float,
+) -> tuple[float, float]:
+    """Return reference factor from local channel/reference advantages.
+
+    Positive means the channel beats the reference inside the useful plasma region.
+    Negative means the reference beats the channel.
+
+    The a0 advantage controls the sign strongly: if the channel loses in a0
+    beyond the deadband, a better waist is not allowed to rescue the score.
+    """
+    if not np.isfinite(a0_log_advantage) or not np.isfinite(waist_log_advantage):
+        return float("nan"), float("nan")
+
+    if scale_log <= 0.0:
+        raise ValueError("scale_log must be positive")
+
+    combined = a0_weight * a0_log_advantage + waist_weight * waist_log_advantage
+
+    # Hard sign guard: if channel loses in a0 beyond the deadband,
+    # keep the advantage negative even if waist is better.
+    if a0_log_advantage < -deadband_log:
+        combined = min(combined, a0_log_advantage)
+
+    effective = _signed_deadband(combined, deadband_log)
+    factor = float(np.tanh(effective / scale_log))
+
+    return factor, float(combined)
+
+
+def _positive_log_ratio(numerator: float, denominator: float) -> float:
+    if not np.isfinite(numerator) or not np.isfinite(denominator):
+        return float("nan")
+    if numerator <= 0.0 or denominator <= 0.0:
+        return float("nan")
+    return float(np.log(numerator / denominator))
 
 
 def score_triplet_csvs(
@@ -355,21 +406,57 @@ def score_triplet_csvs(
     score_uniform = float(uniform["score"])
     score_vacuum = float(vacuum["score"])
 
-    if score_uniform >= score_vacuum:
-        reference_kind = "uniform"
-        reference_score = score_uniform
-    else:
-        reference_kind = "vacuum"
-        reference_score = score_vacuum
-
-    score_delta_vs_reference = score_channel - reference_score
     score_delta_vs_uniform = score_channel - score_uniform
     score_delta_vs_vacuum = score_channel - score_vacuum
 
-    reference_factor = reference_factor_from_delta(
-        score_delta_vs_reference,
-        deadband=tcfg.reference_deadband,
-        scale=tcfg.reference_scale,
+    # Keep the old absolute-score reference for diagnostics only.
+    if score_uniform >= score_vacuum:
+        score_reference_kind = "uniform"
+        score_reference = score_uniform
+    else:
+        score_reference_kind = "vacuum"
+        score_reference = score_vacuum
+
+    score_delta_vs_reference = score_channel - score_reference
+
+    a0_exit_channel = float(channel.get("a0_exit", float("nan")))
+    a0_exit_uniform = float(uniform.get("a0_exit", float("nan")))
+    a0_exit_vacuum = float(vacuum.get("a0_exit", float("nan")))
+
+    waist_exit_channel = float(channel.get("waist_exit_um", float("nan")))
+    waist_exit_uniform = float(uniform.get("waist_exit_um", float("nan")))
+    waist_exit_vacuum = float(vacuum.get("waist_exit_um", float("nan")))
+
+    # The reference for the multiplicative factor is the case that gives
+    # the largest useful a0 near the plateau exit. This makes the factor
+    # negative when the uniform plasma beats the channel in a0.
+    if a0_exit_uniform >= a0_exit_vacuum:
+        reference_kind = "uniform"
+        a0_exit_reference = a0_exit_uniform
+        waist_exit_reference = waist_exit_uniform
+    else:
+        reference_kind = "vacuum"
+        a0_exit_reference = a0_exit_vacuum
+        waist_exit_reference = waist_exit_vacuum
+
+    a0_log_advantage_vs_reference = _positive_log_ratio(
+        a0_exit_channel,
+        a0_exit_reference,
+    )
+
+    # Smaller waist is better, hence reference/channel.
+    waist_log_advantage_vs_reference = _positive_log_ratio(
+        waist_exit_reference,
+        waist_exit_channel,
+    )
+
+    reference_factor, combined_log_advantage = reference_factor_from_local_advantage(
+        a0_log_advantage=a0_log_advantage_vs_reference,
+        waist_log_advantage=waist_log_advantage_vs_reference,
+        deadband_log=tcfg.reference_deadband_log,
+        scale_log=tcfg.reference_scale_log,
+        a0_weight=tcfg.reference_a0_weight,
+        waist_weight=tcfg.reference_waist_weight,
     )
 
     final_score = score_channel * reference_factor
@@ -379,11 +466,24 @@ def score_triplet_csvs(
         "status": "ok",
         "failure_reason": "",
         "reference_kind": reference_kind,
-        "reference_score": reference_score,
+        "score_reference_kind": score_reference_kind,
+        "score_reference": score_reference,
         "score_delta_vs_reference": score_delta_vs_reference,
         "score_delta_vs_uniform": score_delta_vs_uniform,
         "score_delta_vs_vacuum": score_delta_vs_vacuum,
         "reference_factor": reference_factor,
+        "a0_exit_reference": a0_exit_reference,
+        "waist_exit_reference_um": waist_exit_reference,
+        "a0_log_advantage_vs_reference": a0_log_advantage_vs_reference,
+        "waist_log_advantage_vs_reference": waist_log_advantage_vs_reference,
+        "combined_log_advantage": combined_log_advantage,
+        "reference_deadband_log": tcfg.reference_deadband_log,
+        "reference_scale_log": tcfg.reference_scale_log,
+        "reference_a0_weight": tcfg.reference_a0_weight,
+        "reference_waist_weight": tcfg.reference_waist_weight,
+        "waist_exit_channel_um": waist_exit_channel,
+        "waist_exit_uniform_um": waist_exit_uniform,
+        "waist_exit_vacuum_um": waist_exit_vacuum,
         "reference_deadband": tcfg.reference_deadband,
         "reference_scale": tcfg.reference_scale,
         "final_score": final_score,
