@@ -194,6 +194,43 @@ python scripts/analyze_campaign.py \
 
 The triplet layer should not require HDF5 if all three case metrics CSVs already exist.
 
+## Generate case plots from existing CSV metrics
+
+Once a case has been reduced to:
+
+`CASE_DIR/guiding_metrics.csv`
+
+its plots can be generated without reading WarpX/openPMD HDF5 diagnostics again:
+
+```
+OUTDIR="$ROOT/analysis_outputs/plot_existing_cases_$(date +%Y%m%d_%H%M%S)" 
+
+python scripts/analyze_campaign.py \
+--campaign-root "$ROOT" \
+--outdir "$OUTDIR" \
+--case-metrics-root "$ROOT" \
+--plot-existing-cases \
+--skip-existing
+
+```
+
+This writes plots to:
+
+`CASE_DIR/plots/`
+
+The sentinel plot is:
+
+`CASE_DIR/plots/guiding_summary_multipanel.png`
+
+Use:
+
+`--overwrite-case-plots`
+
+to regenerate existing plots.
+
+This command is CSV-based. It does not require the original HDF5 files to still exist.
+
+
 ## Shared baselines
 
 The campaign parser supports capillary campaign names such as:
