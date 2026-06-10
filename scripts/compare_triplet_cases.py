@@ -11,7 +11,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from cap_guiding.plots import save_triplet_plots
 from cap_guiding.triplet import build_triplet_tables, write_triplet_tables
-from cap_guiding.workflows import ensure_case_metrics
+from cap_guiding.workflows import case_dir_from_diag, ensure_case_metrics
 
 
 def main() -> None:
@@ -30,7 +30,11 @@ def main() -> None:
     )
     parser.add_argument("--vacuum-diag", required=True, help="vacuum CASE/diags/diag1")
 
-    parser.add_argument("--outdir", required=True, help="Triplet output directory")
+    parser.add_argument(
+        "--outdir",
+        default=None,
+        help="Triplet output directory. Defaults to the channel CASE_DIR.",
+    )
     parser.add_argument(
         "--case-metrics-root",
         default="analysis_outputs/case_metrics",
@@ -74,7 +78,13 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    outdir = Path(args.outdir)
+    if args.outdir is None:
+        try:
+            outdir = case_dir_from_diag(args.channel_diag)
+        except ValueError as exc:
+            raise SystemExit(f"[ERROR] {exc}") from exc
+    else:
+        outdir = Path(args.outdir)
     wide_path = outdir / "guiding_triplet_wide.csv"
 
     if wide_path.exists() and not args.overwrite_triplet:

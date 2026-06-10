@@ -20,7 +20,11 @@ def main() -> None:
     parser.add_argument("--channel", required=True, help="channel guiding_metrics.csv")
     parser.add_argument("--uniform", required=True, help="uniform guiding_metrics.csv")
     parser.add_argument("--vacuum", required=True, help="vacuum guiding_metrics.csv")
-    parser.add_argument("--outdir", required=True)
+    parser.add_argument(
+        "--outdir",
+        default=None,
+        help="Triplet output directory. Defaults to the channel CSV parent directory.",
+    )
     parser.add_argument("--label", default="triplet")
     parser.add_argument("--late-fraction", type=float, default=1.0 / 3.0)
     parser.add_argument(
@@ -40,7 +44,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    outdir = Path(args.outdir)
+    outdir = Path(args.outdir) if args.outdir is not None else Path(args.channel).parent
     wide_path = outdir / "guiding_triplet_wide.csv"
 
     if wide_path.exists() and args.skip_existing and not args.overwrite:

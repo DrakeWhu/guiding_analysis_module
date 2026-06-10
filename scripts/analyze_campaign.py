@@ -113,7 +113,9 @@ def main() -> None:
     parser.add_argument(
         "--triplets-root",
         default=None,
-        help="Defaults to OUTDIR/triplets",
+        help="Optional legacy central root for triplet outputs. "
+        "If omitted, each triplet is written next to the channel "
+        "guiding_metrics.csv.",
     )
 
     parser.add_argument(
@@ -186,11 +188,7 @@ def main() -> None:
         if args.case_metrics_root is not None
         else outdir / "case_metrics"
     )
-    triplets_root = (
-        Path(args.triplets_root)
-        if args.triplets_root is not None
-        else outdir / "triplets"
-    )
+    triplets_root = Path(args.triplets_root) if args.triplets_root is not None else None
 
     cases = discover_cases(campaign_root)
     triplets = build_triplets(cases)
@@ -279,7 +277,10 @@ def main() -> None:
     print(f"campaign_root        = {campaign_root}")
     print(f"outdir               = {outdir}")
     print(f"case_metrics_root    = {case_metrics_root}")
-    print(f"triplets_root        = {triplets_root}")
+    print(
+        "triplets_root        = "
+        f"{triplets_root if triplets_root is not None else '<channel metrics dir>'}"
+    )
     print(f"cases detected       = {len(cases)}")
     print(f"triplets structural complete = {len(complete)}")
     print(f"triplets ready min_h5        = {len(ready_min_h5)}")
@@ -417,7 +418,11 @@ def main() -> None:
 
                 continue
 
-            triplet_outdir = triplets_root / triplet.label
+            triplet_outdir = (
+                triplets_root / triplet.label
+                if triplets_root is not None
+                else channel_csv.parent
+            )
             wide_path = triplet_outdir / "guiding_triplet_wide.csv"
 
             if (

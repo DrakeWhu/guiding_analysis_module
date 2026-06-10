@@ -6,12 +6,30 @@ from .metrics import compute_case_rows, write_case_csv
 from .plots import save_case_plots
 
 
+def case_dir_from_diag(diag: str | Path) -> Path:
+    """Infer CASE_DIR from CASE/diags/diag1.
+
+    The guiding pipeline treats CASE_DIR as the persistent owner of reduced
+    analysis products. For a standard WarpX diagnostic path like
+    CASE_DIR/diags/diag1, this returns CASE_DIR.
+    """
+    diag = Path(diag)
+
+    if diag.name.startswith("diag") and diag.parent.name == "diags":
+        return diag.parents[1]
+
+    raise ValueError(
+        f"Cannot infer CASE_DIR from diagnostic path {diag!s}. "
+        "Expected CASE_DIR/diags/diagN; pass --outdir explicitly."
+    )
+
+
 def case_id_from_diag(diag: str | Path) -> str:
     """Infer CASE_ID from CASE/diags/diag1 when possible."""
     diag = Path(diag)
 
     if diag.name.startswith("diag") and diag.parent.name == "diags":
-        return diag.parents[1].name
+        return case_dir_from_diag(diag).name
 
     return diag.name
 

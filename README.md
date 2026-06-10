@@ -185,7 +185,6 @@ python scripts/analyze_campaign.py \
   --campaign-root "$ROOT" \
   --outdir "$OUTDIR" \
   --case-metrics-root "$ROOT" \
-  --triplets-root "$OUTDIR/triplets" \
   --run-triplets \
   --skip-existing \
   --min-h5 2 \
