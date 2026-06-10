@@ -331,6 +331,87 @@ def reference_factor_from_local_advantage(
     return factor, float(combined)
 
 
+def _read_reference_window_df(
+    csv_path: str | Path,
+    *,
+    start_mm: float,
+    end_mm: float,
+) -> pd.DataFrame:
+    df = pd.read_csv(csv_path)
+
+    required = ["iteration", "propagation_mm", "a0_peak", "waist_um"]
+    missing = [col for col in required if col not in df.columns]
+    if missing:
+        raise ValueError(f"missing columns in {csv_path}: {missing}")
+
+    df = df[required].copy()
+    for col in required:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    df = df[
+        (df["propagation_mm"] >= start_mm) & (df["propagation_mm"] <= end_mm)
+    ].copy()
+
+    df = df.dropna(subset=["iteration", "a0_peak", "waist_um"])
+    df = df[(df["a0_peak"] > 0.0) & (df["waist_um"] > 0.0)]
+
+    return df.set_index("iteration").sort_index()
+
+
+def _rowwise_exit_reference_advantage(
+    *,
+    channel_csv: str | Path,
+    uniform_csv: str | Path,
+    vacuum_csv: str | Path,
+    exit_start_mm: float,
+    exit_end_mm: float,
+) -> dict[str, float]:
+    channel = _read_reference_window_df(
+        channel_csv,
+        start_mm=exit_start_mm,
+        end_mm=exit_end_mm,
+    )
+    uniform = _read_reference_window_df(
+        uniform_csv,
+        start_mm=exit_start_mm,
+        end_mm=exit_end_mm,
+    )
+    vacuum = _read_reference_window_df(
+        vacuum_csv,
+        start_mm=exit_start_mm,
+        end_mm=exit_end_mm,
+    )
+
+    common = channel.index.intersection(uniform.index).intersection(vacuum.index)
+
+    if len(common) == 0:
+        raise ValueError("no common iterations in triplet exit window")
+
+    ch = channel.loc[common]
+    uni = uniform.loc[common]
+    vac = vacuum.loc[common]
+
+    use_uniform = uni["a0_peak"] >= vac["a0_peak"]
+
+    ref_a0 = uni["a0_peak"].where(use_uniform, vac["a0_peak"])
+    ref_waist = uni["waist_um"].where(use_uniform, vac["waist_um"])
+
+    a0_log = np.log(ch["a0_peak"] / ref_a0)
+    waist_log = np.log(ref_waist / ch["waist_um"])
+
+    finite = np.isfinite(a0_log) & np.isfinite(waist_log)
+    if not bool(finite.any()):
+        raise ValueError("no finite row-wise reference advantages")
+
+    return {
+        "a0_log_advantage": float(np.median(a0_log[finite])),
+        "waist_log_advantage": float(np.median(waist_log[finite])),
+        "n_reference_rows": int(finite.sum()),
+        "fraction_a0_beats_reference": float(np.mean(a0_log[finite] > 0.0)),
+        "fraction_waist_beats_reference": float(np.mean(waist_log[finite] > 0.0)),
+    }
+
+
 def _positive_log_ratio(numerator: float, denominator: float) -> float:
     if not np.isfinite(numerator) or not np.isfinite(denominator):
         return float("nan")
@@ -439,16 +520,18 @@ def score_triplet_csvs(
         a0_exit_reference = a0_exit_vacuum
         waist_exit_reference = waist_exit_vacuum
 
-    a0_log_advantage_vs_reference = _positive_log_ratio(
-        a0_exit_channel,
-        a0_exit_reference,
+    rowwise = _rowwise_exit_reference_advantage(
+        channel_csv=channel_csv,
+        uniform_csv=uniform_csv,
+        vacuum_csv=vacuum_csv,
+        exit_start_mm=float(channel["exit_start_mm"]),
+        exit_end_mm=float(channel["exit_end_mm"]),
     )
 
+    a0_log_advantage_vs_reference = rowwise["a0_log_advantage"]
+
     # Smaller waist is better, hence reference/channel.
-    waist_log_advantage_vs_reference = _positive_log_ratio(
-        waist_exit_reference,
-        waist_exit_channel,
-    )
+    waist_log_advantage_vs_reference = rowwise["waist_log_advantage"]
 
     reference_factor, combined_log_advantage = reference_factor_from_local_advantage(
         a0_log_advantage=a0_log_advantage_vs_reference,
@@ -516,4 +599,8 @@ def score_triplet_csvs(
         "valid_fraction_channel": channel.get("valid_fraction", float("nan")),
         "valid_fraction_uniform": uniform.get("valid_fraction", float("nan")),
         "valid_fraction_vacuum": vacuum.get("valid_fraction", float("nan")),
+        "reference_factor_mode": "rowwise_exit_median",
+        "n_reference_rows": rowwise["n_reference_rows"],
+        "fraction_a0_beats_reference": rowwise["fraction_a0_beats_reference"],
+        "fraction_waist_beats_reference": rowwise["fraction_waist_beats_reference"],
     }
