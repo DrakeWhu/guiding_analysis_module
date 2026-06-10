@@ -2,8 +2,13 @@
 from __future__ import annotations
 
 import argparse
+import shlex
 import sys
 from pathlib import Path
+from typing import Any
+
+import numpy as np
+import pandas as pd
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -20,12 +25,230 @@ from cap_guiding.particles import (
 )
 
 
-def resolve_iterations(diag: Path, which: str, stride: int) -> list[int]:
-    if which == "last":
-        return [last_iteration(diag)]
+def parse_case_env(path: Path) -> dict[str, str]:
+    env: dict[str, str] = {}
 
+    if not path.exists():
+        return env
+
+    for raw in path.read_text().splitlines():
+        line = raw.strip()
+
+        if not line or line.startswith("#"):
+            continue
+
+        if line.startswith("export "):
+            line = line[len("export ") :].strip()
+
+        if "=" not in line:
+            continue
+
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+
+        try:
+            parts = shlex.split(value)
+            value = parts[0] if parts else ""
+        except ValueError:
+            value = value.strip("'\"")
+
+        env[key] = value
+
+    return env
+
+
+def get_float_env(env: dict[str, str], names: list[str]) -> float | None:
+    for name in names:
+        if name in env and env[name] != "":
+            try:
+                return float(env[name])
+            except ValueError:
+                pass
+    return None
+
+
+def target_propagation_from_case(
+    *,
+    case_dir: Path,
+    exit_kind: str,
+    target_propagation_mm: float | None,
+) -> float:
+    if target_propagation_mm is not None:
+        return float(target_propagation_mm)
+
+    env = parse_case_env(case_dir / "case.env")
+
+    plateau_mm = get_float_env(
+        env,
+        [
+            "PLATEAU_LENGTH_MM",
+            "plateau_length_mm",
+            "L_PLATEAU_MM",
+            "LENGTH_MM",
+        ],
+    )
+
+    if plateau_mm is None:
+        raise ValueError(
+            f"Could not infer plateau length from {case_dir / 'case.env'}. "
+            "Use --target-propagation-mm explicitly."
+        )
+
+    if exit_kind == "plateau":
+        return float(plateau_mm)
+
+    if exit_kind == "capillary":
+        # Conservative default: capillary exit = plateau exit unless an
+        # explicit downramp/capillary length is present in case.env.
+        capillary_mm = get_float_env(
+            env,
+            [
+                "CAPILLARY_LENGTH_MM",
+                "capillary_length_mm",
+                "TOTAL_CAPILLARY_LENGTH_MM",
+            ],
+        )
+        if capillary_mm is not None:
+            return float(capillary_mm)
+
+        downramp_mm = get_float_env(
+            env,
+            [
+                "DOWNRAMP_LENGTH_MM",
+                "RAMP_DOWN_LENGTH_MM",
+                "downramp_length_mm",
+            ],
+        )
+        if downramp_mm is not None:
+            return float(plateau_mm + downramp_mm)
+
+        print(
+            "[WARN] --exit-kind capillary requested, but no explicit capillary "
+            "or downramp length was found in case.env. Falling back to plateau exit."
+        )
+        return float(plateau_mm)
+
+    raise ValueError(f"Unknown exit_kind: {exit_kind}")
+
+
+def read_guiding_iteration_at_propagation(
+    metrics_csv: Path,
+    *,
+    target_propagation_mm: float,
+) -> dict[str, Any]:
+    df = pd.read_csv(metrics_csv)
+
+    required = ["iteration", "propagation_mm"]
+    missing = [col for col in required if col not in df.columns]
+    if missing:
+        raise ValueError(f"Missing columns in {metrics_csv}: {missing}")
+
+    df = df.copy()
+    df["iteration"] = pd.to_numeric(df["iteration"], errors="coerce")
+    df["propagation_mm"] = pd.to_numeric(df["propagation_mm"], errors="coerce")
+    df = df.dropna(subset=["iteration", "propagation_mm"])
+
+    if df.empty:
+        raise ValueError(f"No valid iteration/propagation rows in {metrics_csv}")
+
+    idx = (df["propagation_mm"] - float(target_propagation_mm)).abs().idxmin()
+    row = df.loc[idx]
+
+    return {
+        "target_propagation_mm": float(target_propagation_mm),
+        "target_guiding_iteration": int(row["iteration"]),
+        "target_guiding_propagation_mm": float(row["propagation_mm"]),
+    }
+
+
+def nearest_particle_iteration(
+    *,
+    diag: Path,
+    target_iteration: int,
+) -> dict[str, Any]:
     ts = open_series(diag)
-    return get_iterations(ts, stride=stride)
+    particle_iterations = list(map(int, get_iterations(ts, stride=1)))
+
+    if not particle_iterations:
+        raise RuntimeError(f"No particle iterations found in {diag}")
+
+    arr = np.asarray(particle_iterations, dtype=int)
+    selected = int(arr[np.argmin(np.abs(arr - int(target_iteration)))])
+
+    return {
+        "selected_particle_iteration": selected,
+        "target_iteration_delta": int(selected - int(target_iteration)),
+        "available_particle_iterations_min": int(arr.min()),
+        "available_particle_iterations_max": int(arr.max()),
+        "n_available_particle_iterations": int(arr.size),
+    }
+
+
+def resolve_iterations(
+    *,
+    diag: Path,
+    which: str,
+    stride: int,
+    case_dir: Path,
+    guiding_metrics: Path | None,
+    exit_kind: str,
+    target_propagation_mm: float | None,
+) -> tuple[list[int], dict[str, Any]]:
+    if which == "last":
+        iteration = last_iteration(diag)
+        return [iteration], {
+            "selection_mode": "last",
+            "selected_particle_iteration": int(iteration),
+        }
+
+    if which == "all":
+        ts = open_series(diag)
+        iterations = get_iterations(ts, stride=stride)
+        return list(map(int, iterations)), {
+            "selection_mode": "all",
+            "analysis_stride": int(stride),
+        }
+
+    if which == "exit":
+        metrics_csv = (
+            guiding_metrics
+            if guiding_metrics is not None
+            else case_dir / "guiding_metrics.csv"
+        )
+
+        if not metrics_csv.exists():
+            raise FileNotFoundError(
+                f"Missing guiding metrics for --which exit: {metrics_csv}"
+            )
+
+        target_mm = target_propagation_from_case(
+            case_dir=case_dir,
+            exit_kind=exit_kind,
+            target_propagation_mm=target_propagation_mm,
+        )
+
+        guiding_info = read_guiding_iteration_at_propagation(
+            metrics_csv,
+            target_propagation_mm=target_mm,
+        )
+
+        particle_info = nearest_particle_iteration(
+            diag=diag,
+            target_iteration=guiding_info["target_guiding_iteration"],
+        )
+
+        selection_info = {
+            "selection_mode": "exit",
+            "exit_kind": exit_kind,
+            "guiding_metrics_csv": str(metrics_csv),
+            **guiding_info,
+            **particle_info,
+        }
+
+        return [int(particle_info["selected_particle_iteration"])], selection_info
+
+    raise ValueError(f"Unknown --which mode: {which}")
 
 
 def main() -> None:
@@ -43,7 +266,7 @@ def main() -> None:
         help="Output directory, usually CASE/particle_analysis",
     )
     parser.add_argument("--species", default="electrons")
-    parser.add_argument("--which", choices=["last", "all"], default="last")
+    parser.add_argument("--which", choices=["last", "all", "exit"], default="last")
     parser.add_argument("--stride", type=int, default=1)
     parser.add_argument("--hot-energy-mev", type=float, default=10.0)
     parser.add_argument(
@@ -61,7 +284,24 @@ def main() -> None:
         "--exit-window-mm",
         type=float,
         default=None,
-        help="Optional window behind max longitudinal coordinate in each dump.",
+        help="Optional particle-space window behind max longitudinal coordinate in selected dump.",
+    )
+    parser.add_argument(
+        "--exit-kind",
+        choices=["plateau", "capillary"],
+        default="plateau",
+        help="Physical target used by --which exit.",
+    )
+    parser.add_argument(
+        "--target-propagation-mm",
+        type=float,
+        default=None,
+        help="Override physical target propagation in mm for --which exit.",
+    )
+    parser.add_argument(
+        "--guiding-metrics",
+        default=None,
+        help="Optional guiding_metrics.csv. Defaults to CASE_DIR/guiding_metrics.csv.",
     )
     parser.add_argument("--bins", type=int, default=200)
     parser.add_argument("--emax-mev", type=float, default=None)
@@ -72,6 +312,9 @@ def main() -> None:
 
     diag = Path(args.diag)
     outdir = Path(args.outdir)
+    case_dir = diag.parents[1] if diag.parent.name == "diags" else outdir.parent
+    guiding_metrics = Path(args.guiding_metrics) if args.guiding_metrics else None
+
     summary_csv = outdir / "particle_summary.csv"
 
     if summary_csv.exists() and args.skip_existing and not args.overwrite:
@@ -84,10 +327,14 @@ def main() -> None:
         )
 
     print("=== Particle case analysis ===")
+    print(f"case_dir          = {case_dir}")
     print(f"diag              = {diag}")
     print(f"outdir            = {outdir}")
     print(f"species           = {args.species}")
     print(f"which             = {args.which}")
+    print(f"exit_kind         = {args.exit_kind}")
+    print(f"target_prop_mm    = {args.target_propagation_mm}")
+    print(f"guiding_metrics   = {guiding_metrics or case_dir / 'guiding_metrics.csv'}")
     print(f"stride            = {args.stride}")
     print(f"hot_energy_mev    = {args.hot_energy_mev}")
     print(f"longitudinal      = {args.longitudinal}")
@@ -98,9 +345,22 @@ def main() -> None:
     ts = open_series(diag)
     print("[SERIES]", describe_series(ts))
 
-    iterations = resolve_iterations(diag, args.which, args.stride)
+    iterations, selection_info = resolve_iterations(
+        diag=diag,
+        which=args.which,
+        stride=args.stride,
+        case_dir=case_dir,
+        guiding_metrics=guiding_metrics,
+        exit_kind=args.exit_kind,
+        target_propagation_mm=args.target_propagation_mm,
+    )
+
     if not iterations:
-        raise RuntimeError(f"No particle iterations found in {diag}")
+        raise RuntimeError(f"No particle iterations selected in {diag}")
+
+    print("[SELECTION]")
+    for key, value in selection_info.items():
+        print(f"  {key} = {value}")
 
     rows = []
     plots_dir = outdir / "plots"
@@ -121,6 +381,11 @@ def main() -> None:
             exit_window_mm=args.exit_window_mm,
             forward_only=not args.no_forward_cut,
         )
+
+        row = {
+            **selection_info,
+            **row,
+        }
         rows.append(row)
 
         suffix = f"it{int(iteration):08d}"

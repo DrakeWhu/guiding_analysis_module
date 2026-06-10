@@ -22,11 +22,15 @@ def main() -> None:
         help="Diagnostic directory name under CASE/diags.",
     )
     parser.add_argument("--species", default="electrons")
-    parser.add_argument("--which", choices=["last", "all"], default="last")
+    parser.add_argument("--which", choices=["last", "all", "exit"], default="last")
     parser.add_argument("--stride", type=int, default=1)
     parser.add_argument("--hot-energy-mev", type=float, default=10.0)
     parser.add_argument("--longitudinal", choices=["x", "y", "z"], default="z")
     parser.add_argument("--exit-window-mm", type=float, default=None)
+    parser.add_argument(
+        "--exit-kind", choices=["plateau", "capillary"], default="plateau"
+    )
+    parser.add_argument("--target-propagation-mm", type=float, default=None)
     parser.add_argument("--no-forward-cut", action="store_true")
     parser.add_argument("--skip-existing", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
@@ -50,6 +54,8 @@ def main() -> None:
     print(f"diag name         = {args.particle_diag_name}")
     print(f"species           = {args.species}")
     print(f"which             = {args.which}")
+    print(f"exit_kind         = {args.exit_kind}")
+    print(f"target_prop_mm    = {args.target_propagation_mm}")
     print(f"hot_energy_mev    = {args.hot_energy_mev}")
     print("==================================")
 
@@ -82,8 +88,12 @@ def main() -> None:
             str(args.hot_energy_mev),
             "--longitudinal",
             args.longitudinal,
+            "--exit-kind",
+            args.exit_kind,
         ]
 
+        if args.target_propagation_mm is not None:
+            cmd += ["--target-propagation-mm", str(args.target_propagation_mm)]
         if args.exit_window_mm is not None:
             cmd += ["--exit-window-mm", str(args.exit_window_mm)]
         if args.no_forward_cut:
