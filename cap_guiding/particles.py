@@ -306,61 +306,80 @@ def save_energy_spectrum(
     longitudinal: str = "z",
     forward_only: bool = False,
 ) -> Path:
+    """
+    Save a weighted kinetic-energy spectrum for selected electrons.
+
+    Important distinction:
+      - hot_energy_mev: physical hot-electron threshold, drawn as a vertical line.
+      - spectrum_min_energy_mev: lower energy cutoff used for the plotted histogram.
+
+    Therefore, to remove the cold plasma peak, call this with e.g.
+      spectrum_min_energy_mev=1.0, 5.0, or 10.0.
+
+    If forward_only=True, electrons with non-positive longitudinal momentum are
+    also excluded from the plotted spectrum.
+    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
 
+    if bins <= 0:
+        raise ValueError("bins must be positive")
+
+    emin_mev = float(spectrum_min_energy_mev)
+    if emin_mev < 0.0:
+        raise ValueError("spectrum_min_energy_mev must be non-negative")
+
+    hot_energy_mev = float(hot_energy_mev)
+
     energy = dump.kinetic_energy_mev
-    q_long, u_long, _, _ = _longitudinal_arrays(dump, longitudinal)
+    weights = dump.w
 
-    finite = (
-        np.isfinite(energy)
-        & np.isfinite(dump.w)
-        & (dump.w > 0.0)
-        & np.isfinite(q_long)
-        & np.isfinite(u_long)
-    )
+    # Base validity mask: physical finite weighted particles.
+    valid = np.isfinite(energy) & np.isfinite(weights) & (weights > 0.0)
 
-    plot_mask = finite & (energy >= float(spectrum_min_energy_mev))
-
+    # Optional forward cut using the chosen longitudinal momentum component.
     if forward_only:
-        plot_mask &= u_long > 0.0
+        _, u_long, _, _ = _longitudinal_arrays(dump, longitudinal)
+        valid &= np.isfinite(u_long) & (u_long > 0.0)
 
-    if not np.any(finite):
+    if not np.any(valid):
         return _save_no_data_plot(
             path=path,
             title=f"Electron energy spectrum, iteration {dump.iteration}",
-            message="No finite particles",
+            message="No valid particles selected",
             xlabel="electron kinetic energy [MeV]",
             ylabel="weighted counts [a.u.]",
         )
+
+    # This is the actual cutoff that removes the cold plasma peak.
+    plot_mask = valid & (energy >= emin_mev)
 
     if not np.any(plot_mask):
         return _save_no_data_plot(
             path=path,
             title=f"Electron energy spectrum, iteration {dump.iteration}",
-            message=(
-                f"No electrons selected for spectrum\n"
-                f"E >= {spectrum_min_energy_mev:g} MeV"
-            ),
+            message=f"No electrons with E >= {emin_mev:g} MeV",
             xlabel="electron kinetic energy [MeV]",
             ylabel="weighted counts [a.u.]",
         )
 
     e = energy[plot_mask]
-    w = dump.w[plot_mask]
-
-    emin_mev = float(spectrum_min_energy_mev)
+    w = weights[plot_mask]
 
     if emax_mev is None:
+        # Use the actual selected tail, not the full cold population.
         emax_mev = max(
-            float(np.nanpercentile(e, 99.9)),
-            float(hot_energy_mev) * 1.2,
-            emin_mev * 1.2,
+            float(np.nanmax(e)),
+            hot_energy_mev * 1.2,
+            emin_mev + 1.0,
         )
+    else:
+        emax_mev = float(emax_mev)
 
-    emax_mev = max(float(emax_mev), float(hot_energy_mev) * 1.2, emin_mev + 1.0e-12)
-
-    fig, ax = plt.subplots(figsize=(7.5, 4.8))
+    if emax_mev <= emin_mev:
+        raise ValueError(
+            f"Invalid spectrum range: emin={emin_mev:g} MeV, emax={emax_mev:g} MeV"
+        )
 
     counts, edges = np.histogram(
         e,
@@ -368,19 +387,34 @@ def save_energy_spectrum(
         range=(emin_mev, emax_mev),
         weights=w,
     )
-    ax.stairs(counts, edges)
+
+    charge_pc = float(np.sum(w) * E_CHARGE_C / 1.0e-12)
+
+    fig, ax = plt.subplots(figsize=(7.5, 4.8))
+
+    ax.stairs(counts, edges, linewidth=1.2)
 
     if emin_mev <= hot_energy_mev <= emax_mev:
-        ax.axvline(hot_energy_mev, linestyle="--", linewidth=1.0)
+        ax.axvline(
+            hot_energy_mev,
+            linestyle="--",
+            linewidth=1.0,
+            label=f"hot threshold = {hot_energy_mev:g} MeV",
+        )
+        ax.legend(loc="upper right")
 
     if log_y:
         ax.set_yscale("log")
 
-    charge_pc = float(np.sum(w) * E_CHARGE_C / 1.0e-12)
     ax.text(
         0.98,
         0.95,
-        (f"N = {e.size}\nQ = {charge_pc:.3g} pC\nEmax = {np.nanmax(e):.3g} MeV"),
+        (
+            f"N = {e.size}\n"
+            f"Q = {charge_pc:.3g} pC\n"
+            f"Emin = {emin_mev:.3g} MeV\n"
+            f"Emax = {np.nanmax(e):.3g} MeV"
+        ),
         ha="right",
         va="top",
         transform=ax.transAxes,
@@ -390,9 +424,10 @@ def save_energy_spectrum(
     ax.set_ylabel("weighted counts [a.u.]")
     ax.set_title(
         f"Electron energy spectrum, iteration {dump.iteration}\n"
-        f"E >= {spectrum_min_energy_mev:g} MeV"
+        f"plotted electrons: E >= {emin_mev:g} MeV"
     )
     ax.grid(True, alpha=0.25)
+
     fig.tight_layout()
     fig.savefig(path, dpi=180)
     plt.close(fig)

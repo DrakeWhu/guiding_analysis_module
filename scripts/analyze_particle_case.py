@@ -326,6 +326,17 @@ def main() -> None:
     )
     parser.add_argument("--bins", type=int, default=200)
     parser.add_argument("--emax-mev", type=float, default=None)
+    parser.add_argument(
+        "--spectrum-emin-mev",
+        type=float,
+        default=0.0,
+        help="Minimum kinetic energy shown in the energy spectrum plot.",
+    )
+    parser.add_argument(
+        "--spectrum-log-y",
+        action="store_true",
+        help="Use logarithmic y axis for energy spectrum plots.",
+    )
     parser.add_argument("--max-phase-points", type=int, default=200_000)
     parser.add_argument("--skip-existing", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
@@ -443,8 +454,6 @@ def main() -> None:
             emax_mev=args.emax_mev,
             spectrum_min_energy_mev=args.spectrum_emin_mev,
             log_y=args.spectrum_log_y,
-            longitudinal=args.longitudinal,
-            forward_only=not args.no_forward_cut,
         )
 
         try:
