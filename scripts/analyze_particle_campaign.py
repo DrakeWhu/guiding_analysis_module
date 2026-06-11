@@ -50,15 +50,6 @@ def main() -> None:
         default="particle_analysis",
         help="Output directory name inside each case directory.",
     )
-    parser.add_argument("--bins", type=int, default=200)
-    parser.add_argument("--emax-mev", type=float, default=None)
-    parser.add_argument("--spectrum-emin-mev", type=float, default=0.0)
-    parser.add_argument("--spectrum-log-y", action="store_true")
-    parser.add_argument(
-        "--outdir-name",
-        default="particle_analysis",
-        help="Output directory name inside each case directory.",
-    )
     args = parser.parse_args()
 
     root = Path(args.campaign_root)

@@ -349,17 +349,6 @@ def main() -> None:
             "and no explicit total capillary length is available."
         ),
     )
-    parser.add_argument(
-        "--spectrum-emin-mev",
-        type=float,
-        default=0.0,
-        help="Minimum kinetic energy shown in the energy spectrum plot.",
-    )
-    parser.add_argument(
-        "--spectrum-log-y",
-        action="store_true",
-        help="Use logarithmic y axis for energy spectrum plots.",
-    )
     args = parser.parse_args()
 
     diag = Path(args.diag)
