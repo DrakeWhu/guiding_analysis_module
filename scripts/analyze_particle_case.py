@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import shlex
 import sys
+import re
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,7 @@ from cap_guiding.particles import (
     read_particle_dump,
     save_energy_spectrum,
     save_longitudinal_phase_space,
+    save_longitudinal_energy_space,
     summarize_dump,
     write_summary_csv,
 )
@@ -68,11 +70,20 @@ def get_float_env(env: dict[str, str], names: list[str]) -> float | None:
     return None
 
 
+def infer_plateau_length_from_case_name(case_dir: Path) -> float | None:
+    match = re.search(r"_L([0-9]+(?:[p.][0-9]+)?)mm_", case_dir.name)
+    if not match:
+        return None
+
+    return float(match.group(1).replace("p", "."))
+
+
 def target_propagation_from_case(
     *,
     case_dir: Path,
     exit_kind: str,
     target_propagation_mm: float | None,
+    downramp_mm: float | None = None,
 ) -> float:
     if target_propagation_mm is not None:
         return float(target_propagation_mm)
@@ -90,8 +101,12 @@ def target_propagation_from_case(
     )
 
     if plateau_mm is None:
+        plateau_mm = infer_plateau_length_from_case_name(case_dir)
+
+    if plateau_mm is None:
         raise ValueError(
-            f"Could not infer plateau length from {case_dir / 'case.env'}. "
+            f"Could not infer plateau length from {case_dir / 'case.env'} "
+            f"or case name {case_dir.name!r}. "
             "Use --target-propagation-mm explicitly."
         )
 
@@ -101,6 +116,10 @@ def target_propagation_from_case(
     if exit_kind == "capillary":
         # Conservative default: capillary exit = plateau exit unless an
         # explicit downramp/capillary length is present in case.env.
+
+        if downramp_mm is not None:
+            return float(plateau_mm + float(downramp_mm))
+
         capillary_mm = get_float_env(
             env,
             [
@@ -194,6 +213,7 @@ def resolve_iterations(
     guiding_metrics: Path | None,
     exit_kind: str,
     target_propagation_mm: float | None,
+    downramp_mm: float | None,
 ) -> tuple[list[int], dict[str, Any]]:
     if which == "last":
         iteration = last_iteration(diag)
@@ -226,6 +246,7 @@ def resolve_iterations(
             case_dir=case_dir,
             exit_kind=exit_kind,
             target_propagation_mm=target_propagation_mm,
+            downramp_mm=downramp_mm,
         )
 
         guiding_info = read_guiding_iteration_at_propagation(
@@ -308,6 +329,26 @@ def main() -> None:
     parser.add_argument("--max-phase-points", type=int, default=200_000)
     parser.add_argument("--skip-existing", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument(
+        "--downramp-mm",
+        type=float,
+        default=None,
+        help=(
+            "Downramp length in mm used when --which exit --exit-kind capillary "
+            "and no explicit total capillary length is available."
+        ),
+    )
+    parser.add_argument(
+        "--spectrum-emin-mev",
+        type=float,
+        default=0.0,
+        help="Minimum kinetic energy shown in the energy spectrum plot.",
+    )
+    parser.add_argument(
+        "--spectrum-log-y",
+        action="store_true",
+        help="Use logarithmic y axis for energy spectrum plots.",
+    )
     args = parser.parse_args()
 
     diag = Path(args.diag)
@@ -340,6 +381,9 @@ def main() -> None:
     print(f"longitudinal      = {args.longitudinal}")
     print(f"forward_cut       = {not args.no_forward_cut}")
     print(f"exit_window_mm    = {args.exit_window_mm}")
+    print(f"downramp_mm      = {args.downramp_mm}")
+    print(f"spectrum_emin    = {args.spectrum_emin_mev}")
+    print(f"spectrum_log_y   = {args.spectrum_log_y}")
     print("==============================")
 
     ts = open_series(diag)
@@ -353,6 +397,7 @@ def main() -> None:
         guiding_metrics=guiding_metrics,
         exit_kind=args.exit_kind,
         target_propagation_mm=args.target_propagation_mm,
+        downramp_mm=args.downramp_mm,
     )
 
     if not iterations:
@@ -396,12 +441,25 @@ def main() -> None:
             hot_energy_mev=args.hot_energy_mev,
             bins=args.bins,
             emax_mev=args.emax_mev,
+            spectrum_min_energy_mev=args.spectrum_emin_mev,
+            log_y=args.spectrum_log_y,
+            longitudinal=args.longitudinal,
+            forward_only=not args.no_forward_cut,
         )
 
         try:
             save_longitudinal_phase_space(
                 dump,
                 path=plots_dir / f"longitudinal_phase_space_hot_{suffix}.png",
+                hot_energy_mev=args.hot_energy_mev,
+                longitudinal=args.longitudinal,
+                exit_window_mm=args.exit_window_mm,
+                forward_only=not args.no_forward_cut,
+                max_points=args.max_phase_points,
+            )
+            save_longitudinal_energy_space(
+                dump,
+                path=plots_dir / f"longitudinal_energy_space_hot_{suffix}.png",
                 hot_energy_mev=args.hot_energy_mev,
                 longitudinal=args.longitudinal,
                 exit_window_mm=args.exit_window_mm,

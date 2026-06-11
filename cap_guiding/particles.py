@@ -301,36 +301,158 @@ def save_energy_spectrum(
     hot_energy_mev: float = 10.0,
     bins: int = 200,
     emax_mev: float | None = None,
+    spectrum_min_energy_mev: float = 0.0,
+    log_y: bool = False,
+    longitudinal: str = "z",
+    forward_only: bool = False,
 ) -> Path:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
 
     energy = dump.kinetic_energy_mev
-    finite = np.isfinite(energy) & np.isfinite(dump.w) & (dump.w > 0.0)
+    q_long, u_long, _, _ = _longitudinal_arrays(dump, longitudinal)
+
+    finite = (
+        np.isfinite(energy)
+        & np.isfinite(dump.w)
+        & (dump.w > 0.0)
+        & np.isfinite(q_long)
+        & np.isfinite(u_long)
+    )
+
+    plot_mask = finite & (energy >= float(spectrum_min_energy_mev))
+
+    if forward_only:
+        plot_mask &= u_long > 0.0
 
     if not np.any(finite):
-        raise ValueError("No finite particles for energy spectrum")
+        return _save_no_data_plot(
+            path=path,
+            title=f"Electron energy spectrum, iteration {dump.iteration}",
+            message="No finite particles",
+            xlabel="electron kinetic energy [MeV]",
+            ylabel="weighted counts [a.u.]",
+        )
 
-    e = energy[finite]
-    w = dump.w[finite]
+    if not np.any(plot_mask):
+        return _save_no_data_plot(
+            path=path,
+            title=f"Electron energy spectrum, iteration {dump.iteration}",
+            message=(
+                f"No electrons selected for spectrum\n"
+                f"E >= {spectrum_min_energy_mev:g} MeV"
+            ),
+            xlabel="electron kinetic energy [MeV]",
+            ylabel="weighted counts [a.u.]",
+        )
+
+    e = energy[plot_mask]
+    w = dump.w[plot_mask]
+
+    emin_mev = float(spectrum_min_energy_mev)
 
     if emax_mev is None:
-        emax_mev = max(float(np.nanpercentile(e, 99.9)), hot_energy_mev * 1.2)
+        emax_mev = max(
+            float(np.nanpercentile(e, 99.9)),
+            float(hot_energy_mev) * 1.2,
+            emin_mev * 1.2,
+        )
 
-    emax_mev = max(float(emax_mev), hot_energy_mev * 1.2)
+    emax_mev = max(float(emax_mev), float(hot_energy_mev) * 1.2, emin_mev + 1.0e-12)
 
-    fig, ax = plt.subplots(figsize=(7, 4.5))
-    ax.hist(e, bins=int(bins), range=(0.0, emax_mev), weights=w, histtype="step")
-    ax.axvline(hot_energy_mev, linestyle="--", linewidth=1.0)
+    fig, ax = plt.subplots(figsize=(7.5, 4.8))
+
+    counts, edges = np.histogram(
+        e,
+        bins=int(bins),
+        range=(emin_mev, emax_mev),
+        weights=w,
+    )
+    ax.stairs(counts, edges)
+
+    if emin_mev <= hot_energy_mev <= emax_mev:
+        ax.axvline(hot_energy_mev, linestyle="--", linewidth=1.0)
+
+    if log_y:
+        ax.set_yscale("log")
+
+    charge_pc = float(np.sum(w) * E_CHARGE_C / 1.0e-12)
+    ax.text(
+        0.98,
+        0.95,
+        (f"N = {e.size}\nQ = {charge_pc:.3g} pC\nEmax = {np.nanmax(e):.3g} MeV"),
+        ha="right",
+        va="top",
+        transform=ax.transAxes,
+    )
+
     ax.set_xlabel("electron kinetic energy [MeV]")
     ax.set_ylabel("weighted counts [a.u.]")
-    ax.set_title(f"Electron energy spectrum, iteration {dump.iteration}")
+    ax.set_title(
+        f"Electron energy spectrum, iteration {dump.iteration}\n"
+        f"E >= {spectrum_min_energy_mev:g} MeV"
+    )
     ax.grid(True, alpha=0.25)
     fig.tight_layout()
     fig.savefig(path, dpi=180)
     plt.close(fig)
 
     return path
+
+
+def _longitudinal_arrays(
+    dump: ParticleDump,
+    longitudinal: str,
+) -> tuple[np.ndarray, np.ndarray, str, str]:
+    if longitudinal == "z":
+        return dump.z_m * 1.0e3, dump.uz, "z [mm]", "uz"
+    if longitudinal == "x":
+        return dump.x_m * 1.0e3, dump.ux, "x [mm]", "ux"
+    if longitudinal == "y":
+        return dump.y_m * 1.0e3, dump.uy, "y [mm]", "uy"
+
+    raise ValueError("longitudinal must be one of: x, y, z")
+
+
+def _save_no_data_plot(
+    *,
+    path: str | Path,
+    title: str,
+    message: str,
+    xlabel: str,
+    ylabel: str,
+) -> Path:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    fig, ax = plt.subplots(figsize=(7.5, 4.8))
+    ax.text(
+        0.5,
+        0.5,
+        message,
+        ha="center",
+        va="center",
+        transform=ax.transAxes,
+    )
+    ax.set_title(title)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    ax.grid(True, alpha=0.25)
+    fig.tight_layout()
+    fig.savefig(path, dpi=180)
+    plt.close(fig)
+
+    return path
+
+
+def _scatter_style_for_npoints(n: int) -> tuple[float, float]:
+    if n <= 200:
+        return 18.0, 0.85
+    if n <= 2_000:
+        return 8.0, 0.65
+    if n <= 20_000:
+        return 2.5, 0.45
+    return 1.0, 0.30
 
 
 def save_longitudinal_phase_space(
@@ -354,44 +476,109 @@ def save_longitudinal_phase_space(
         exit_window_mm=exit_window_mm,
     )
 
-    if longitudinal == "z":
-        q = dump.z_m * 1.0e3
-        u = dump.uz
-        q_label = "z [mm]"
-        u_label = "uz"
-    elif longitudinal == "x":
-        q = dump.x_m * 1.0e3
-        u = dump.ux
-        q_label = "x [mm]"
-        u_label = "ux"
-    else:
-        q = dump.y_m * 1.0e3
-        u = dump.uy
-        q_label = "y [mm]"
-        u_label = "uy"
+    q, u, q_label, u_label = _longitudinal_arrays(dump, longitudinal)
 
     idx = np.where(hot)[0]
     if idx.size == 0:
-        raise ValueError("No hot electrons selected for phase-space plot")
+        return _save_no_data_plot(
+            path=path,
+            title=(
+                f"Hot-electron longitudinal phase space, E >= {hot_energy_mev:g} MeV"
+            ),
+            message=f"No selected electrons\nE >= {hot_energy_mev:g} MeV",
+            xlabel=q_label,
+            ylabel=u_label,
+        )
 
     if idx.size > max_points:
         keep = np.linspace(0, idx.size - 1, int(max_points)).astype(int)
         idx = idx[keep]
 
+    point_size, alpha = _scatter_style_for_npoints(int(idx.size))
+
     fig, ax = plt.subplots(figsize=(7.5, 4.8))
     sc = ax.scatter(
         q[idx],
         u[idx],
-        s=1.0,
+        s=point_size,
         c=dump.kinetic_energy_mev[idx],
-        alpha=0.35,
+        alpha=alpha,
+        edgecolors="none",
     )
     cbar = fig.colorbar(sc, ax=ax)
     cbar.set_label("Ekin [MeV]")
 
     ax.set_xlabel(q_label)
     ax.set_ylabel(u_label)
-    ax.set_title(f"Hot-electron longitudinal phase space, E > {hot_energy_mev:g} MeV")
+    ax.set_title(
+        f"Hot-electron longitudinal phase space, iteration {dump.iteration}\n"
+        f"E >= {hot_energy_mev:g} MeV, N = {idx.size}"
+    )
+    ax.grid(True, alpha=0.25)
+    fig.tight_layout()
+    fig.savefig(path, dpi=180)
+    plt.close(fig)
+
+    return path
+
+
+def save_longitudinal_energy_space(
+    dump: ParticleDump,
+    *,
+    path: str | Path,
+    hot_energy_mev: float = 10.0,
+    longitudinal: str = "z",
+    exit_window_mm: float | None = None,
+    forward_only: bool = True,
+    max_points: int = 200_000,
+) -> Path:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    hot = select_hot_electrons(
+        dump,
+        hot_energy_mev=hot_energy_mev,
+        forward_only=forward_only,
+        longitudinal=longitudinal,
+        exit_window_mm=exit_window_mm,
+    )
+
+    q, _, q_label, _ = _longitudinal_arrays(dump, longitudinal)
+    energy = dump.kinetic_energy_mev
+
+    idx = np.where(hot)[0]
+    if idx.size == 0:
+        return _save_no_data_plot(
+            path=path,
+            title=(
+                f"Hot-electron longitudinal energy space, E >= {hot_energy_mev:g} MeV"
+            ),
+            message=f"No selected electrons\nE >= {hot_energy_mev:g} MeV",
+            xlabel=q_label,
+            ylabel="Ekin [MeV]",
+        )
+
+    if idx.size > max_points:
+        keep = np.linspace(0, idx.size - 1, int(max_points)).astype(int)
+        idx = idx[keep]
+
+    point_size, alpha = _scatter_style_for_npoints(int(idx.size))
+
+    fig, ax = plt.subplots(figsize=(7.5, 4.8))
+    ax.scatter(
+        q[idx],
+        energy[idx],
+        s=point_size,
+        alpha=alpha,
+        edgecolors="none",
+    )
+
+    ax.set_xlabel(q_label)
+    ax.set_ylabel("Ekin [MeV]")
+    ax.set_title(
+        f"Hot-electron longitudinal energy space, iteration {dump.iteration}\n"
+        f"E >= {hot_energy_mev:g} MeV, N = {idx.size}"
+    )
     ax.grid(True, alpha=0.25)
     fig.tight_layout()
     fig.savefig(path, dpi=180)

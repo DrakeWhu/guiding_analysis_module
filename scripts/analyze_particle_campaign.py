@@ -39,6 +39,17 @@ def main() -> None:
         default="0*_from_*",
         help="Glob for case directories under campaign root.",
     )
+    parser.add_argument("--downramp-mm", type=float, default=None)
+    parser.add_argument("--bins", type=int, default=200)
+    parser.add_argument("--emax-mev", type=float, default=None)
+    parser.add_argument("--spectrum-emin-mev", type=float, default=0.0)
+    parser.add_argument("--spectrum-log-y", action="store_true")
+    parser.add_argument("--max-phase-points", type=int, default=200_000)
+    parser.add_argument(
+        "--outdir-name",
+        default="particle_analysis",
+        help="Output directory name inside each case directory.",
+    )
     args = parser.parse_args()
 
     root = Path(args.campaign_root)
@@ -64,7 +75,7 @@ def main() -> None:
 
     for case_dir in cases:
         diag = case_dir / "diags" / args.particle_diag_name
-        outdir = case_dir / "particle_analysis"
+        outdir = case_dir / args.outdir_name
 
         if not diag.exists():
             print(f"[MISSING] {diag}")
@@ -90,6 +101,12 @@ def main() -> None:
             args.longitudinal,
             "--exit-kind",
             args.exit_kind,
+            "--bins",
+            str(args.bins),
+            "--spectrum-emin-mev",
+            str(args.spectrum_emin_mev),
+            "--max-phase-points",
+            str(args.max_phase_points),
         ]
 
         if args.target_propagation_mm is not None:
@@ -102,6 +119,12 @@ def main() -> None:
             cmd += ["--skip-existing"]
         if args.overwrite:
             cmd += ["--overwrite"]
+        if args.downramp_mm is not None:
+            cmd += ["--downramp-mm", str(args.downramp_mm)]
+        if args.emax_mev is not None:
+            cmd += ["--emax-mev", str(args.emax_mev)]
+        if args.spectrum_log_y:
+            cmd += ["--spectrum-log-y"]
 
         print(f"[CASE] {case_dir.name}")
         result = subprocess.run(cmd, check=False)
