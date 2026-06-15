@@ -36,6 +36,8 @@ diag1/
 *.avi
 *.mov
 *.csv
+*.zip
+*.tar.gz
 
 # OS/editor junk
 .DS_Store
