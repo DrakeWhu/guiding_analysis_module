@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import argparse
+from email import parser
 import subprocess
 import sys
 from pathlib import Path
+from cap_guiding.diagnostics import resolve_particle_diag_dir
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -18,8 +20,12 @@ def main() -> None:
     parser.add_argument("--campaign-root", required=True)
     parser.add_argument(
         "--particle-diag-name",
-        default="electron_particles",
-        help="Diagnostic directory name under CASE/diags.",
+        default="auto",
+        help=(
+            "Diagnostic directory name under CASE/diags, or 'auto'. "
+            "Auto maps legacy species electrons to electron_particles[/openpmd] "
+            "and new species to plasma_electrons/ionized_electrons."
+        ),
     )
     parser.add_argument("--species", default="electrons")
     parser.add_argument("--which", choices=["last", "all", "exit"], default="last")
@@ -74,13 +80,18 @@ def main() -> None:
     failed = 0
 
     for case_dir in cases:
-        diag = case_dir / "diags" / args.particle_diag_name
-        outdir = case_dir / args.outdir_name
-
-        if not diag.exists():
-            print(f"[MISSING] {diag}")
+        try:
+            diag = resolve_particle_diag_dir(
+                case_dir,
+                args.species,
+                particle_diag_name=args.particle_diag_name,
+            )
+        except FileNotFoundError as exc:
+            print(f"[MISSING] {exc}")
             failed += 1
             continue
+
+        outdir = case_dir / args.outdir_name
 
         cmd = [
             sys.executable,

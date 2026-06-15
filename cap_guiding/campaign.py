@@ -5,6 +5,7 @@ import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from .diagnostics import resolve_field_diag_dir
 
 import pandas as pd
 
@@ -230,7 +231,7 @@ def infer_case_info_from_dir(
     if case_type is None:
         return None
 
-    diag_dir = case_dir / "diags" / "diag1"
+    diag_dir = resolve_field_diag_dir(case_dir, require_exists=False)
 
     return CaseInfo(
         case_id=case_id,
@@ -302,9 +303,14 @@ def _read_cases_full_dataframe(cases_path: Path) -> pd.DataFrame:
 
 def load_cases_from_cases_full(campaign_root: str | Path) -> list[CaseInfo]:
     campaign_root = Path(campaign_root)
-    cases_path = campaign_root / "cases_full.tsv"
+    cases_path = None
+    for name in ("cases_full.tsv", "cases.tsv"):
+        candidate = campaign_root / name
+        if candidate.is_file():
+            cases_path = candidate
+            break
 
-    if not cases_path.is_file():
+    if cases_path is None:
         return []
 
     df = _read_cases_full_dataframe(cases_path)
@@ -359,6 +365,8 @@ def load_cases_from_cases_full(campaign_root: str | Path) -> list[CaseInfo]:
     )
 
     if case_col is None and path_col is None:
+        if cases_path.name == "cases.tsv":
+            return []
         raise ValueError(
             f"{cases_path} exists but does not contain a recognizable case/path "
             f"column. Parsed columns: {columns}"
@@ -380,7 +388,7 @@ def load_cases_from_cases_full(campaign_root: str | Path) -> list[CaseInfo]:
         else:
             continue
 
-        inferred = infer_case_info_from_dir(case_dir, source="cases_full.tsv")
+        inferred = infer_case_info_from_dir(case_dir, source=cases_path.name)
         if inferred is None:
             continue
 
@@ -409,11 +417,13 @@ def load_cases_from_cases_full(campaign_root: str | Path) -> list[CaseInfo]:
                 plateau=inferred.plateau,
                 focus=inferred.focus,
                 diameter=inferred.diameter,
-                source="cases_full.tsv",
+                source=cases_path.name,
             )
         )
 
     if not cases:
+        if cases_path.name == "cases.tsv":
+            return []
         raise ValueError(
             f"{cases_path} was parsed, but no recognizable campaign cases were "
             "found. Check case names, case_dir paths, and type/profile columns."

@@ -6,29 +6,37 @@ from .metrics import compute_case_rows, write_case_csv
 from .plots import save_case_plots
 
 
-def case_dir_from_diag(diag: str | Path) -> Path:
-    """Infer CASE_DIR from CASE/diags/diag1.
+_FIELD_DIAG_NAMES = {"fields", "diag1"}
 
-    The guiding pipeline treats CASE_DIR as the persistent owner of reduced
-    analysis products. For a standard WarpX diagnostic path like
-    CASE_DIR/diags/diag1, this returns CASE_DIR.
+
+def case_dir_from_diag(diag: str | Path) -> Path:
+    """Infer CASE_DIR from a standard field diagnostic path.
+
+    Supported layouts:
+      - CASE_DIR/diags/fields  (new ionization-capable campaigns)
+      - CASE_DIR/diags/diag1   (legacy campaigns)
     """
     diag = Path(diag)
 
-    if diag.name.startswith("diag") and diag.parent.name == "diags":
+    if diag.parent.name == "diags" and (
+        diag.name in _FIELD_DIAG_NAMES or diag.name.startswith("diag")
+    ):
         return diag.parents[1]
 
     raise ValueError(
         f"Cannot infer CASE_DIR from diagnostic path {diag!s}. "
-        "Expected CASE_DIR/diags/diagN; pass --outdir explicitly."
+        "Expected CASE_DIR/diags/fields or CASE_DIR/diags/diagN; "
+        "pass --outdir explicitly."
     )
 
 
 def case_id_from_diag(diag: str | Path) -> str:
-    """Infer CASE_ID from CASE/diags/diag1 when possible."""
+    """Infer CASE_ID from a standard field diagnostic path when possible."""
     diag = Path(diag)
 
-    if diag.name.startswith("diag") and diag.parent.name == "diags":
+    if diag.parent.name == "diags" and (
+        diag.name in _FIELD_DIAG_NAMES or diag.name.startswith("diag")
+    ):
         return case_dir_from_diag(diag).name
 
     return diag.name
