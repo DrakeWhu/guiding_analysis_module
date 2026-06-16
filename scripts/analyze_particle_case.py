@@ -101,6 +101,18 @@ def target_propagation_from_case(
     )
 
     if plateau_mm is None:
+        plateau_m = get_float_env(
+            env,
+            [
+                "CAP_PLATEAU_LENGTH_M",
+                "PLATEAU_LENGTH_M",
+                "plateau_length_m",
+            ],
+        )
+        if plateau_m is not None:
+            plateau_mm = plateau_m * 1.0e3
+
+    if plateau_mm is None:
         plateau_mm = infer_plateau_length_from_case_name(case_dir)
 
     if plateau_mm is None:
