@@ -12,6 +12,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
+from .beamlike import BeamlikeConfig, add_beamlike_metrics
 from .metrics import E_CHARGE_C
 from .openpmd_io import open_series, get_iterations
 
@@ -191,6 +192,7 @@ def summarize_dump(
     longitudinal: str = "z",
     exit_window_mm: float | None = None,
     forward_only: bool = True,
+    beamlike_config: BeamlikeConfig | None = None,
 ) -> dict[str, Any]:
     energy = dump.kinetic_energy_mev
     w = dump.w
@@ -276,7 +278,7 @@ def summarize_dump(
             }
         )
 
-    return row
+        return add_beamlike_metrics(row, config=beamlike_config)
 
 
 def write_summary_csv(rows: list[dict[str, Any]], path: str | Path) -> Path:
