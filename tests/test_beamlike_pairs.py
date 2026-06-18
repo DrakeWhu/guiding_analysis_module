@@ -150,6 +150,16 @@ class BeamlikePairComparisonTests(unittest.TestCase):
             self.assertGreater(row["beamlike_score_channel"], 0.0)
             self.assertGreater(row["beamlike_score_uniform"], 0.0)
 
+    def test_channel_zero_against_good_uniform_gets_negative_gain(self) -> None:
+        row = compare_beamlike_pair_rows(
+            channel=self.good_row(score=0.0, charge=0.0),
+            uniform=self.good_row(score=359.0, charge=1160.0),
+        )
+
+        self.assertLess(row["beamlike_reference_factor"], 0.0)
+        self.assertLess(row["beamlike_gain_score"], -100.0)
+        self.assertAlmostEqual(row["beamlike_reference_scale_score"], 359.0)
+
 
 if __name__ == "__main__":
     unittest.main()

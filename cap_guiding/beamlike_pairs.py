@@ -46,6 +46,7 @@ PAIR_OUTPUT_COLUMNS = [
     "beamlike_score_ratio",
     "beamlike_score_log_advantage",
     "beamlike_reference_factor",
+    "beamlike_reference_scale_score",
     "beamlike_gain_score",
     "beam_yield_score_channel",
     "beam_yield_score_uniform",
@@ -261,8 +262,12 @@ def compare_beamlike_pair_rows(
         scale_log=cfg.reference_scale_log,
     )
 
+    reference_scale_score = max(score_ch, score_uni)
+
     gain_score = (
-        score_ch * reference_factor if math.isfinite(reference_factor) else float("nan")
+        reference_scale_score * reference_factor
+        if math.isfinite(reference_factor)
+        else float("nan")
     )
 
     out: dict[str, Any] = {
@@ -295,6 +300,7 @@ def compare_beamlike_pair_rows(
         "beamlike_score_log_advantage": log_advantage,
         "beamlike_reference_factor": reference_factor,
         "beamlike_gain_score": gain_score,
+        "beamlike_reference_scale_score": reference_scale_score,
     }
 
     for metric in [
