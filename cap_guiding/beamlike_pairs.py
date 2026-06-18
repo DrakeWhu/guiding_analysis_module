@@ -5,6 +5,7 @@ import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from .beamlike import add_beamlike_metrics
 
 
 @dataclass(frozen=True)
@@ -29,6 +30,8 @@ PAIR_OUTPUT_COLUMNS = [
     "channel_csv",
     "uniform_csv",
     "row_selection",
+    "beamlike_score_source_channel",
+    "beamlike_score_source_uniform",
     "channel_iteration",
     "uniform_iteration",
     "eligible_beamlike_channel",
@@ -150,6 +153,21 @@ def _reference_factor_from_log_advantage(
 def _read_csv_rows(path: str | Path) -> list[dict[str, str]]:
     with Path(path).open("r", encoding="utf-8-sig", newline="") as f_in:
         return list(csv.DictReader(f_in))
+
+
+def _ensure_beamlike_metrics(row: dict[str, Any]) -> tuple[dict[str, Any], str]:
+    """Return a row with beamlike metrics.
+
+    Existing new-format particle_summary.csv files already contain beamlike_score.
+    Older summaries from campaigns analyzed before the beamlike integration only
+    contain raw particle metrics. In that case, compute the beamlike columns
+    on-the-fly without rewriting the original CSV.
+    """
+    value = row.get("beamlike_score", "")
+    if str(value).strip() != "":
+        return dict(row), "particle_summary"
+
+    return add_beamlike_metrics(row), "computed_on_the_fly"
 
 
 def _select_summary_row(
@@ -321,6 +339,8 @@ def compare_beamlike_pair_csvs(
         "channel_csv": str(channel_csv),
         "uniform_csv": str(uniform_csv),
         "row_selection": row_selection,
+        "beamlike_score_source_channel": "",
+        "beamlike_score_source_uniform": "",
         "beamlike_gain_score": float("nan"),
     }
 
@@ -330,23 +350,27 @@ def compare_beamlike_pair_csvs(
     except Exception as exc:
         return {**base, "failure_reason": str(exc)}
 
-    required = [
-        "beamlike_score",
+    required_raw = [
         "charge_hot_pC",
         "n_macroparticles_hot",
         "E95_hot_MeV",
+        "Emean_hot_MeV",
+        "Emax_hot_MeV",
     ]
 
     missing = []
     for label, row in [("channel", channel), ("uniform", uniform)]:
-        for col in required:
+        for col in required_raw:
             if col not in row:
                 missing.append(f"{label}:{col}")
 
     if missing:
         return {**base, "failure_reason": f"missing_columns: {missing}"}
 
-    return compare_beamlike_pair_rows(
+    channel, channel_source = _ensure_beamlike_metrics(channel)
+    uniform, uniform_source = _ensure_beamlike_metrics(uniform)
+
+    row = compare_beamlike_pair_rows(
         channel=channel,
         uniform=uniform,
         channel_case_id=channel_case_id,
@@ -356,6 +380,11 @@ def compare_beamlike_pair_csvs(
         row_selection=row_selection,
         config=config,
     )
+
+    row["beamlike_score_source_channel"] = channel_source
+    row["beamlike_score_source_uniform"] = uniform_source
+
+    return row
 
 
 def write_rows_csv(path: str | Path, rows: list[dict[str, Any]]) -> None:

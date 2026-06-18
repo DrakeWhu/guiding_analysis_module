@@ -104,6 +104,52 @@ class BeamlikePairComparisonTests(unittest.TestCase):
             self.assertEqual(row["status"], "failed")
             self.assertIn("missing_columns", row["failure_reason"])
 
+    def test_compare_csvs_computes_beamlike_on_the_fly_for_old_summaries(self) -> None:
+        old_channel_row = {
+            "iteration": 4000,
+            "charge_hot_pC": 500.0,
+            "n_macroparticles_hot": 800,
+            "E95_hot_MeV": 120.0,
+            "Emean_hot_MeV": 60.0,
+            "Emax_hot_MeV": 220.0,
+            "q_long_min_hot_mm": 9.8,
+            "q_long_max_hot_mm": 10.2,
+        }
+        old_uniform_row = {
+            "iteration": 4000,
+            "charge_hot_pC": 200.0,
+            "n_macroparticles_hot": 500,
+            "E95_hot_MeV": 80.0,
+            "Emean_hot_MeV": 40.0,
+            "Emax_hot_MeV": 180.0,
+            "q_long_min_hot_mm": 9.8,
+            "q_long_max_hot_mm": 10.2,
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            channel = Path(tmp) / "channel.csv"
+            uniform = Path(tmp) / "uniform.csv"
+
+            write_rows_csv(channel, [old_channel_row])
+            write_rows_csv(uniform, [old_uniform_row])
+
+            row = compare_beamlike_pair_csvs(
+                channel_csv=channel,
+                uniform_csv=uniform,
+            )
+
+            self.assertEqual(row["status"], "ok")
+            self.assertEqual(
+                row["beamlike_score_source_channel"],
+                "computed_on_the_fly",
+            )
+            self.assertEqual(
+                row["beamlike_score_source_uniform"],
+                "computed_on_the_fly",
+            )
+            self.assertGreater(row["beamlike_score_channel"], 0.0)
+            self.assertGreater(row["beamlike_score_uniform"], 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()
