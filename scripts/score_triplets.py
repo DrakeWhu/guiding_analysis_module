@@ -103,16 +103,29 @@ def main() -> None:
         uniform_csv = _case_metrics_path(case_metrics_root, triplet.uniform.case_id)
         vacuum_csv = _case_metrics_path(case_metrics_root, triplet.vacuum.case_id)
 
-        row = score_triplet_csvs(
-            channel_csv=channel_csv,
-            uniform_csv=uniform_csv,
-            vacuum_csv=vacuum_csv,
-            channel_case_id=triplet.channel.case_id,
-            uniform_case_id=triplet.uniform.case_id,
-            vacuum_case_id=triplet.vacuum.case_id,
-            case_config=case_config,
-            triplet_config=triplet_config,
-        )
+        try:
+            row = score_triplet_csvs(
+                channel_csv=channel_csv,
+                uniform_csv=uniform_csv,
+                vacuum_csv=vacuum_csv,
+                channel_case_id=triplet.channel.case_id,
+                uniform_case_id=triplet.uniform.case_id,
+                vacuum_case_id=triplet.vacuum.case_id,
+                case_config=case_config,
+                triplet_config=triplet_config,
+            )
+        except Exception as exc:
+            row = {
+                "status": "failed",
+                "failure_reason": f"score_triplet_exception: {exc}",
+                "channel_case_id": triplet.channel.case_id,
+                "uniform_case_id": triplet.uniform.case_id,
+                "vacuum_case_id": triplet.vacuum.case_id,
+                "score_channel": float("nan"),
+                "score_uniform": float("nan"),
+                "score_vacuum": float("nan"),
+                "final_score": float("nan"),
+            }
 
         row.update(
             {

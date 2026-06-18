@@ -412,6 +412,50 @@ def _rowwise_exit_reference_advantage(
     }
 
 
+def _median_exit_reference_advantage(
+    *,
+    channel: dict[str, Any],
+    uniform: dict[str, Any],
+    vacuum: dict[str, Any],
+) -> dict[str, float]:
+    """Fallback reference advantage from per-case exit medians.
+
+    Used when row-wise comparison cannot find common iterations inside the exit
+    window. This preserves campaign-level scoring for differently sampled CSVs
+    without pretending that iterations were aligned.
+    """
+    a0_channel = float(channel.get("a0_exit", float("nan")))
+    a0_uniform = float(uniform.get("a0_exit", float("nan")))
+    a0_vacuum = float(vacuum.get("a0_exit", float("nan")))
+
+    waist_channel = float(channel.get("waist_exit_um", float("nan")))
+    waist_uniform = float(uniform.get("waist_exit_um", float("nan")))
+    waist_vacuum = float(vacuum.get("waist_exit_um", float("nan")))
+
+    if a0_uniform >= a0_vacuum:
+        a0_reference = a0_uniform
+        waist_reference = waist_uniform
+    else:
+        a0_reference = a0_vacuum
+        waist_reference = waist_vacuum
+
+    a0_log = _positive_log_ratio(a0_channel, a0_reference)
+
+    # Smaller waist is better, hence reference/channel.
+    waist_log = _positive_log_ratio(waist_reference, waist_channel)
+
+    if not np.isfinite(a0_log) or not np.isfinite(waist_log):
+        raise ValueError("non_finite_median_reference_advantage")
+
+    return {
+        "a0_log_advantage": a0_log,
+        "waist_log_advantage": waist_log,
+        "n_reference_rows": 0,
+        "fraction_a0_beats_reference": float(a0_log > 0.0),
+        "fraction_waist_beats_reference": float(waist_log > 0.0),
+    }
+
+
 def _positive_log_ratio(numerator: float, denominator: float) -> float:
     if not np.isfinite(numerator) or not np.isfinite(denominator):
         return float("nan")
@@ -520,13 +564,38 @@ def score_triplet_csvs(
         a0_exit_reference = a0_exit_vacuum
         waist_exit_reference = waist_exit_vacuum
 
-    rowwise = _rowwise_exit_reference_advantage(
-        channel_csv=channel_csv,
-        uniform_csv=uniform_csv,
-        vacuum_csv=vacuum_csv,
-        exit_start_mm=float(channel["exit_start_mm"]),
-        exit_end_mm=float(channel["exit_end_mm"]),
-    )
+    reference_factor_mode = "rowwise_exit_median"
+    rowwise_reference_failure_reason = ""
+
+    try:
+        rowwise = _rowwise_exit_reference_advantage(
+            channel_csv=channel_csv,
+            uniform_csv=uniform_csv,
+            vacuum_csv=vacuum_csv,
+            exit_start_mm=float(channel["exit_start_mm"]),
+            exit_end_mm=float(channel["exit_end_mm"]),
+        )
+    except ValueError as exc:
+        rowwise_reference_failure_reason = str(exc)
+        reference_factor_mode = "exit_median_fallback"
+
+        try:
+            rowwise = _median_exit_reference_advantage(
+                channel=channel,
+                uniform=uniform,
+                vacuum=vacuum,
+            )
+        except ValueError as fallback_exc:
+            return {
+                **base,
+                "failure_reason": (
+                    f"rowwise_reference_failed: "
+                    f"{rowwise_reference_failure_reason}; "
+                    f"median_reference_failed: {fallback_exc}"
+                ),
+                "reference_factor_mode": "failed",
+                "rowwise_reference_failure_reason": rowwise_reference_failure_reason,
+            }
 
     a0_log_advantage_vs_reference = rowwise["a0_log_advantage"]
 
@@ -599,7 +668,8 @@ def score_triplet_csvs(
         "valid_fraction_channel": channel.get("valid_fraction", float("nan")),
         "valid_fraction_uniform": uniform.get("valid_fraction", float("nan")),
         "valid_fraction_vacuum": vacuum.get("valid_fraction", float("nan")),
-        "reference_factor_mode": "rowwise_exit_median",
+        "reference_factor_mode": reference_factor_mode,
+        "rowwise_reference_failure_reason": rowwise_reference_failure_reason,
         "n_reference_rows": rowwise["n_reference_rows"],
         "fraction_a0_beats_reference": rowwise["fraction_a0_beats_reference"],
         "fraction_waist_beats_reference": rowwise["fraction_waist_beats_reference"],
