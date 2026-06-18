@@ -13,6 +13,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from cap_guiding.beamlike_pairs import (
     BeamlikePairConfig,
     compare_beamlike_pair_csvs,
+    split_pair_rows,
     write_rows_csv,
 )
 from cap_guiding.campaign import build_triplets, discover_cases
@@ -169,26 +170,71 @@ def main() -> None:
 
         rows.append(row)
 
-    scores_path = outdir / "beamlike_pair_scores.csv"
-    write_rows_csv(scores_path, rows)
-
-    ok = [row for row in rows if row.get("status") == "ok"]
-    failed = [row for row in rows if row.get("status") != "ok"]
-
-    ok_sorted = sorted(
-        ok,
+    buckets = split_pair_rows(rows)
+    positive_rows = sorted(
+        buckets["positive"],
         key=lambda row: _score_float(row, "beamlike_gain_score"),
         reverse=True,
     )
+    neutral_rows = sorted(
+        buckets["neutral"],
+        key=lambda row: (
+            str(row.get("plateau", "")),
+            str(row.get("diameter", "")),
+            str(row.get("focus", "")),
+            str(row.get("channel_case_id", "")),
+        ),
+    )
+    negative_rows = sorted(
+        buckets["negative"],
+        key=lambda row: _score_float(row, "beamlike_gain_score"),
+    )
+    failed_rows = sorted(
+        buckets["failed"],
+        key=lambda row: (
+            str(row.get("failure_reason", "")),
+            str(row.get("channel_case_id", "")),
+            str(row.get("uniform_case_id", "")),
+        ),
+    )
+
+    all_rows = [
+        *positive_rows,
+        *neutral_rows,
+        *negative_rows,
+        *failed_rows,
+    ]
+
+    scores_path = outdir / "beamlike_pair_scores.csv"
+    positive_path = outdir / "positive_beamlike_pairs.csv"
+    neutral_path = outdir / "neutral_beamlike_pairs.csv"
+    negative_path = outdir / "negative_beamlike_pairs.csv"
+    failed_path = outdir / "failed_beamlike_pairs.csv"
+    top_path = outdir / "top_beamlike_pairs.csv"
+    worst_path = outdir / "worst_negative_beamlike_pairs.csv"
+
+    write_rows_csv(scores_path, all_rows)
+    write_rows_csv(positive_path, positive_rows)
+    write_rows_csv(neutral_path, neutral_rows)
+    write_rows_csv(negative_path, negative_rows)
+    write_rows_csv(failed_path, failed_rows)
 
     top_rows: list[dict[str, object]] = []
-    for rank, row in enumerate(ok_sorted[: args.top], start=1):
+    for rank, row in enumerate(positive_rows[: args.top], start=1):
         out = dict(row)
         out["rank"] = rank
         top_rows.append(out)
 
-    top_path = outdir / "top_beamlike_pairs.csv"
+    worst_rows: list[dict[str, object]] = []
+    for rank, row in enumerate(negative_rows[: args.top], start=1):
+        out = dict(row)
+        out["rank"] = rank
+        worst_rows.append(out)
+
     write_rows_csv(top_path, top_rows)
+    write_rows_csv(worst_path, worst_rows)
+
+    ok_count = len(positive_rows) + len(neutral_rows) + len(negative_rows)
 
     print("=== Beamlike channel-vs-uniform summary ===")
     print(f"campaign_root           = {campaign_root}")
@@ -198,26 +244,21 @@ def main() -> None:
     print(f"outdir                  = {outdir}")
     print(f"cases discovered        = {len(cases)}")
     print(f"pairs attempted         = {len(rows)}")
-    print(f"pairs ok                = {len(ok)}")
-    print(f"pairs failed            = {len(failed)}")
+    print(f"pairs ok                = {ok_count}")
+    print(f"pairs positive          = {len(positive_rows)}")
+    print(f"pairs neutral           = {len(neutral_rows)}")
+    print(f"pairs negative          = {len(negative_rows)}")
+    print(f"pairs failed            = {len(failed_rows)}")
     print(f"skipped no channel      = {skipped_without_channel}")
     print(f"skipped no uniform      = {skipped_without_uniform}")
     print(f"pair_scores             = {scores_path}")
-    print(f"top_pairs               = {top_path}")
+    print(f"positive_pairs          = {positive_path}")
+    print(f"neutral_pairs           = {neutral_path}")
+    print(f"negative_pairs          = {negative_path}")
+    print(f"failed_pairs            = {failed_path}")
+    print(f"top_positive_pairs      = {top_path}")
+    print(f"worst_negative_pairs    = {worst_path}")
     print()
-
-    if not ok_sorted:
-        print("No valid beamlike channel-vs-uniform pairs.")
-        if failed:
-            print()
-            print("First failures:")
-            for row in failed[:10]:
-                print(
-                    f"  {row.get('channel_case_id', '')} vs "
-                    f"{row.get('uniform_case_id', '')}: "
-                    f"{row.get('failure_reason', '')}"
-                )
-        return
 
     visible_cols = [
         "rank",
@@ -239,13 +280,39 @@ def main() -> None:
         "focus",
     ]
 
-    print(f"Top {len(top_rows)} beamlike channel-vs-uniform pairs:")
-    for row in top_rows:
-        parts = []
-        for col in visible_cols:
-            if col in row:
-                parts.append(f"{col}={row[col]}")
-        print("  " + "  ".join(parts))
+    if top_rows:
+        print(f"Top {len(top_rows)} positive beamlike channel-vs-uniform pairs:")
+        for row in top_rows:
+            parts = []
+            for col in visible_cols:
+                if col in row:
+                    parts.append(f"{col}={row[col]}")
+            print("  " + "  ".join(parts))
+    else:
+        print("No positive beamlike channel-vs-uniform pairs.")
+
+    print()
+
+    if worst_rows:
+        print(f"Worst {len(worst_rows)} negative beamlike channel-vs-uniform pairs:")
+        for row in worst_rows:
+            parts = []
+            for col in visible_cols:
+                if col in row:
+                    parts.append(f"{col}={row[col]}")
+            print("  " + "  ".join(parts))
+    else:
+        print("No negative beamlike channel-vs-uniform pairs.")
+
+    if failed_rows:
+        print()
+        print("First failures:")
+        for row in failed_rows[:10]:
+            print(
+                f"  {row.get('channel_case_id', '')} vs "
+                f"{row.get('uniform_case_id', '')}: "
+                f"{row.get('failure_reason', '')}"
+            )
 
 
 if __name__ == "__main__":

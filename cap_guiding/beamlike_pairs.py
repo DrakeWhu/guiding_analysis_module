@@ -25,6 +25,7 @@ PAIR_OUTPUT_COLUMNS = [
     "status",
     "failure_reason",
     "comparison_status",
+    "comparison_bucket",
     "channel_case_id",
     "uniform_case_id",
     "channel_csv",
@@ -151,6 +152,51 @@ def _reference_factor_from_log_advantage(
     return math.tanh(_signed_deadband(log_advantage, deadband_log) / scale_log)
 
 
+def classify_pair_row(row: dict[str, Any]) -> str:
+    """Classify a channel-vs-uniform comparison row.
+
+    Buckets:
+      positive: channel beats the uniform reference beyond the configured deadband.
+      neutral: channel and uniform are indistinguishable within the deadband,
+               or both are equally bad under the current strict beamlike score.
+      negative: uniform beats the channel reference.
+      failed: comparison could not be computed.
+    """
+    status = str(row.get("status", "")).strip().lower()
+    if status != "ok":
+        return "failed"
+
+    reference_factor = _finite_float(row, "beamlike_reference_factor")
+    if not math.isfinite(reference_factor):
+        return "failed"
+
+    if reference_factor > 0.0:
+        return "positive"
+    if reference_factor < 0.0:
+        return "negative"
+    return "neutral"
+
+
+def split_pair_rows(
+    rows: list[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    """Split pair-comparison rows into positive/neutral/negative/failed buckets."""
+    buckets: dict[str, list[dict[str, Any]]] = {
+        "positive": [],
+        "neutral": [],
+        "negative": [],
+        "failed": [],
+    }
+
+    for row in rows:
+        out = dict(row)
+        bucket = classify_pair_row(out)
+        out["comparison_bucket"] = bucket
+        buckets[bucket].append(out)
+
+    return buckets
+
+
 def _read_csv_rows(path: str | Path) -> list[dict[str, str]]:
     with Path(path).open("r", encoding="utf-8-sig", newline="") as f_in:
         return list(csv.DictReader(f_in))
@@ -274,6 +320,7 @@ def compare_beamlike_pair_rows(
         "status": "ok",
         "failure_reason": "",
         "comparison_status": "ok",
+        "comparison_bucket": "",
         "channel_case_id": channel_case_id or _string_value(channel, "case_id"),
         "uniform_case_id": uniform_case_id or _string_value(uniform, "case_id"),
         "channel_csv": "" if channel_csv is None else str(channel_csv),
@@ -324,6 +371,8 @@ def compare_beamlike_pair_rows(
         else float("nan")
     )
 
+    out["comparison_bucket"] = classify_pair_row(out)
+
     return out
 
 
@@ -340,6 +389,7 @@ def compare_beamlike_pair_csvs(
         "status": "failed",
         "failure_reason": "",
         "comparison_status": "failed",
+        "comparison_bucket": "failed",
         "channel_case_id": channel_case_id or "",
         "uniform_case_id": uniform_case_id or "",
         "channel_csv": str(channel_csv),

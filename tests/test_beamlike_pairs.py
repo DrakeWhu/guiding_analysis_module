@@ -7,9 +7,11 @@ from pathlib import Path
 
 from cap_guiding.beamlike_pairs import (
     BeamlikePairConfig,
+    classify_pair_row,
     compare_beamlike_pair_csvs,
     compare_beamlike_pair_rows,
     read_particle_summary_row,
+    split_pair_rows,
     write_rows_csv,
 )
 
@@ -159,6 +161,59 @@ class BeamlikePairComparisonTests(unittest.TestCase):
         self.assertLess(row["beamlike_reference_factor"], 0.0)
         self.assertLess(row["beamlike_gain_score"], -100.0)
         self.assertAlmostEqual(row["beamlike_reference_scale_score"], 359.0)
+
+    def test_pair_classification_positive_neutral_negative_failed(self) -> None:
+        positive = compare_beamlike_pair_rows(
+            channel=self.good_row(score=500.0),
+            uniform=self.good_row(score=100.0),
+        )
+        neutral = compare_beamlike_pair_rows(
+            channel=self.good_row(score=102.0),
+            uniform=self.good_row(score=100.0),
+            config=BeamlikePairConfig(reference_deadband_log=math.log(1.05)),
+        )
+        negative = compare_beamlike_pair_rows(
+            channel=self.good_row(score=100.0),
+            uniform=self.good_row(score=500.0),
+        )
+        failed = {"status": "failed", "failure_reason": "missing_csv"}
+
+        self.assertEqual(classify_pair_row(positive), "positive")
+        self.assertEqual(classify_pair_row(neutral), "neutral")
+        self.assertEqual(classify_pair_row(negative), "negative")
+        self.assertEqual(classify_pair_row(failed), "failed")
+
+        self.assertEqual(positive["comparison_bucket"], "positive")
+        self.assertEqual(neutral["comparison_bucket"], "neutral")
+        self.assertEqual(negative["comparison_bucket"], "negative")
+
+    def test_split_pair_rows_adds_rows_to_expected_buckets(self) -> None:
+        rows = [
+            compare_beamlike_pair_rows(
+                channel=self.good_row(score=500.0),
+                uniform=self.good_row(score=100.0),
+            ),
+            compare_beamlike_pair_rows(
+                channel=self.good_row(score=100.0),
+                uniform=self.good_row(score=100.0),
+            ),
+            compare_beamlike_pair_rows(
+                channel=self.good_row(score=100.0),
+                uniform=self.good_row(score=500.0),
+            ),
+            {"status": "failed", "failure_reason": "missing_csv"},
+        ]
+
+        buckets = split_pair_rows(rows)
+
+        self.assertEqual(len(buckets["positive"]), 1)
+        self.assertEqual(len(buckets["neutral"]), 1)
+        self.assertEqual(len(buckets["negative"]), 1)
+        self.assertEqual(len(buckets["failed"]), 1)
+
+        for bucket_name, bucket_rows in buckets.items():
+            for row in bucket_rows:
+                self.assertEqual(row["comparison_bucket"], bucket_name)
 
 
 if __name__ == "__main__":
