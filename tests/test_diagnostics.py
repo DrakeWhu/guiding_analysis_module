@@ -90,6 +90,16 @@ class DiagnosticResolutionTests(unittest.TestCase):
                 case / "diags" / "custom_particles",
             )
 
+    def test_resolve_particle_diag_new_plasma_dir_for_internal_electrons(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            case = Path(tmp) / "case"
+            (case / "diags" / "plasma_electrons").mkdir(parents=True)
+
+            self.assertEqual(
+                resolve_particle_diag_dir(case, "electrons"),
+                case / "diags" / "plasma_electrons",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -12,9 +12,12 @@ ELECTRON_DENSITY_FIELD_CANDIDATES: tuple[str, ...] = (
 )
 
 _PARTICLE_DIAG_CANDIDATES_BY_SPECIES: dict[str, tuple[str, ...]] = {
-    # Legacy campaigns sometimes used CASE/diags/electron_particles, and some
-    # analysis commands point one level deeper to electron_particles/openpmd.
+    # New SUNRISE particle campaigns store the diagnostic under
+    # CASE/diags/plasma_electrons while the internal openPMD species is still
+    # named "electrons". Keep legacy locations as fallback only.
     "electrons": (
+        "plasma_electrons",
+        "plasma_electrons/openpmd",
         "electron_particles/openpmd",
         "electron_particles",
         "electrons/openpmd",

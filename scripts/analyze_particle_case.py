@@ -24,6 +24,8 @@ from cap_guiding.particles import (
     save_longitudinal_energy_space,
     summarize_dump,
     write_summary_csv,
+    summarize_acceptance_curves,
+    write_acceptance_curves_csv,
 )
 
 
@@ -76,6 +78,19 @@ def infer_plateau_length_from_case_name(case_dir: Path) -> float | None:
         return None
 
     return float(match.group(1).replace("p", "."))
+
+
+def parse_float_list(text: str) -> list[float]:
+    values: list[float] = []
+    for raw in str(text).replace(",", " ").split():
+        values.append(float(raw))
+    if not values:
+        raise argparse.ArgumentTypeError("expected at least one numeric value")
+    return values
+
+
+def case_id_from_case_dir(case_dir: Path) -> str:
+    return case_dir.name.split("_", 1)[0]
 
 
 def target_propagation_from_case(
@@ -361,6 +376,24 @@ def main() -> None:
             "and no explicit total capillary length is available."
         ),
     )
+    parser.add_argument(
+        "--acceptance-theta-cuts-mrad",
+        type=parse_float_list,
+        default=parse_float_list("2,5,10,20,50"),
+        help=(
+            "Comma- or whitespace-separated theta_r cuts in mrad for "
+            "particle_acceptance_curves.csv."
+        ),
+    )
+    parser.add_argument(
+        "--acceptance-energy-cuts-mev",
+        type=parse_float_list,
+        default=parse_float_list("10,25,50,100,150,200,250,300"),
+        help=(
+            "Comma- or whitespace-separated minimum kinetic energies in MeV "
+            "for particle_acceptance_curves.csv."
+        ),
+    )
     args = parser.parse_args()
 
     diag = Path(args.diag)
@@ -369,15 +402,28 @@ def main() -> None:
     guiding_metrics = Path(args.guiding_metrics) if args.guiding_metrics else None
 
     summary_csv = outdir / "particle_summary.csv"
+    acceptance_csv = outdir / "particle_acceptance_curves.csv"
 
-    if summary_csv.exists() and args.skip_existing and not args.overwrite:
-        print(f"[SKIP] existing {summary_csv}")
+    write_summary = args.overwrite or not summary_csv.exists()
+    write_acceptance = args.overwrite or not acceptance_csv.exists()
+
+    if (
+        args.skip_existing
+        and not args.overwrite
+        and not write_summary
+        and not write_acceptance
+    ):
+        print(f"[SKIP] existing {summary_csv} and {acceptance_csv}")
         return
 
-    if summary_csv.exists() and not args.overwrite:
-        raise FileExistsError(
-            f"Output already exists: {summary_csv}. Use --overwrite or --skip-existing."
-        )
+    if not args.skip_existing and not args.overwrite:
+        existing = [str(p) for p in (summary_csv, acceptance_csv) if p.exists()]
+        if existing:
+            raise FileExistsError(
+                "Output already exists: "
+                + ", ".join(existing)
+                + ". Use --overwrite or --skip-existing."
+            )
 
     print("=== Particle case analysis ===")
     print(f"case_dir          = {case_dir}")
@@ -396,6 +442,8 @@ def main() -> None:
     print(f"downramp_mm      = {args.downramp_mm}")
     print(f"spectrum_emin    = {args.spectrum_emin_mev}")
     print(f"spectrum_log_y   = {args.spectrum_log_y}")
+    print(f"accept_theta_mrad= {args.acceptance_theta_cuts_mrad}")
+    print(f"accept_Emin_MeV  = {args.acceptance_energy_cuts_mev}")
     print("==============================")
 
     ts = open_series(diag)
@@ -420,7 +468,10 @@ def main() -> None:
         print(f"  {key} = {value}")
 
     rows = []
+    acceptance_rows = []
     plots_dir = outdir / "plots"
+    case_id = case_id_from_case_dir(case_dir)
+    case_name = case_dir.name
 
     for iteration in iterations:
         print(f"[READ] iteration {iteration}")
@@ -444,6 +495,22 @@ def main() -> None:
             **row,
         }
         rows.append(row)
+
+        acceptance_rows.extend(
+            summarize_acceptance_curves(
+                dump,
+                case_id=case_id,
+                case_name=case_name,
+                selection_mode=str(selection_info.get("selection_mode", "")),
+                selected_particle_iteration=int(
+                    selection_info.get("selected_particle_iteration", iteration)
+                ),
+                theta_cuts_mrad=args.acceptance_theta_cuts_mrad,
+                e_min_mev=args.acceptance_energy_cuts_mev,
+                longitudinal=args.longitudinal,
+                forward_only=not args.no_forward_cut,
+            )
+        )
 
         suffix = f"it{int(iteration):08d}"
 
@@ -479,8 +546,17 @@ def main() -> None:
         except ValueError as exc:
             print(f"[WARN] skipping phase-space plot for iteration {iteration}: {exc}")
 
-    write_summary_csv(rows, summary_csv)
-    print(f"[OK] wrote {summary_csv}")
+    if write_summary:
+        write_summary_csv(rows, summary_csv)
+        print(f"[OK] wrote {summary_csv}")
+    else:
+        print(f"[USE] existing {summary_csv}")
+
+    if write_acceptance:
+        write_acceptance_curves_csv(acceptance_rows, acceptance_csv)
+        print(f"[OK] wrote {acceptance_csv}")
+    else:
+        print(f"[USE] existing {acceptance_csv}")
 
 
 if __name__ == "__main__":

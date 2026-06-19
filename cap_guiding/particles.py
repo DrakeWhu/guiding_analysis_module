@@ -3,7 +3,7 @@ from __future__ import annotations
 import csv
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 import matplotlib
 
@@ -19,6 +19,23 @@ from .transverse import summarize_transverse_metrics
 
 ELECTRON_REST_ENERGY_MEV = 0.51099895
 DEFAULT_PARTICLE_VARS = ["x", "y", "z", "ux", "uy", "uz", "w"]
+DEFAULT_ACCEPTANCE_THETA_CUTS_MRAD = (2.0, 5.0, 10.0, 20.0, 50.0)
+DEFAULT_ACCEPTANCE_E_MIN_MEV = (10.0, 25.0, 50.0, 100.0, 150.0, 200.0, 250.0, 300.0)
+
+PARTICLE_ACCEPTANCE_COLUMNS = [
+    "case_id",
+    "case_name",
+    "iteration",
+    "selection_mode",
+    "selected_particle_iteration",
+    "theta_cut_mrad",
+    "E_min_MeV",
+    "accepted_charge_pC",
+    "accepted_weight",
+    "accepted_n_macroparticles",
+    "longitudinal_coordinate",
+    "forward_only",
+]
 
 
 @dataclass(frozen=True)
@@ -289,6 +306,148 @@ def summarize_dump(
     )
 
     return out
+
+
+def _validate_acceptance_grid(
+    *,
+    theta_cuts_mrad: Sequence[float],
+    e_min_mev: Sequence[float],
+) -> tuple[list[float], list[float]]:
+    theta_cuts = [float(v) for v in theta_cuts_mrad]
+    energy_cuts = [float(v) for v in e_min_mev]
+
+    if not theta_cuts:
+        raise ValueError("theta_cuts_mrad must not be empty")
+    if not energy_cuts:
+        raise ValueError("e_min_mev must not be empty")
+
+    if any((not np.isfinite(v)) or v <= 0.0 for v in theta_cuts):
+        raise ValueError("theta_cuts_mrad values must be finite and positive")
+    if any((not np.isfinite(v)) or v < 0.0 for v in energy_cuts):
+        raise ValueError("e_min_mev values must be finite and non-negative")
+
+    return sorted(theta_cuts), sorted(energy_cuts)
+
+
+def _transverse_divergence_mrad(
+    dump: ParticleDump,
+    *,
+    longitudinal: str = "z",
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return radial divergence in mrad and the chosen longitudinal momentum.
+
+    The z-axis definition matches summarize_transverse_metrics():
+    theta_r = sqrt(arctan2(ux, uz)^2 + arctan2(uy, uz)^2).
+    For x/y, the same construction is applied around the requested axis.
+    """
+    if longitudinal == "z":
+        u_long = dump.uz
+        u_t1 = dump.ux
+        u_t2 = dump.uy
+    elif longitudinal == "x":
+        u_long = dump.ux
+        u_t1 = dump.uy
+        u_t2 = dump.uz
+    elif longitudinal == "y":
+        u_long = dump.uy
+        u_t1 = dump.ux
+        u_t2 = dump.uz
+    else:
+        raise ValueError("longitudinal must be one of: x, y, z")
+
+    theta_1 = np.arctan2(u_t1, u_long)
+    theta_2 = np.arctan2(u_t2, u_long)
+    theta_r = np.sqrt(theta_1 * theta_1 + theta_2 * theta_2) * 1.0e3
+    return theta_r, u_long
+
+
+def summarize_acceptance_curves(
+    dump: ParticleDump,
+    *,
+    case_id: str = "",
+    case_name: str = "",
+    selection_mode: str = "",
+    selected_particle_iteration: int | None = None,
+    theta_cuts_mrad: Sequence[float] = DEFAULT_ACCEPTANCE_THETA_CUTS_MRAD,
+    e_min_mev: Sequence[float] = DEFAULT_ACCEPTANCE_E_MIN_MEV,
+    longitudinal: str = "z",
+    forward_only: bool = True,
+) -> list[dict[str, Any]]:
+    """Return accepted-charge curves for energy/divergence cuts.
+
+    Each row represents Q(E >= E_min_MeV, theta_r <= theta_cut_mrad), using
+    macroparticle weights as charge weights. The returned charge is the positive
+    electron charge magnitude in pC, matching charge_hot_pC.
+    """
+    theta_cuts, energy_cuts = _validate_acceptance_grid(
+        theta_cuts_mrad=theta_cuts_mrad,
+        e_min_mev=e_min_mev,
+    )
+
+    energy = dump.kinetic_energy_mev
+    weights = np.asarray(dump.w, dtype=float)
+    theta_r_mrad, u_long = _transverse_divergence_mrad(
+        dump,
+        longitudinal=longitudinal,
+    )
+
+    valid = (
+        np.isfinite(energy)
+        & np.isfinite(theta_r_mrad)
+        & np.isfinite(weights)
+        & (weights > 0.0)
+    )
+
+    if forward_only:
+        valid &= np.isfinite(u_long) & (u_long > 0.0)
+
+    selected_it = (
+        int(dump.iteration)
+        if selected_particle_iteration is None
+        else int(selected_particle_iteration)
+    )
+
+    rows: list[dict[str, Any]] = []
+    for theta_cut in theta_cuts:
+        theta_mask = valid & (theta_r_mrad <= theta_cut)
+        for e_cut in energy_cuts:
+            accepted = theta_mask & (energy >= e_cut)
+            accepted_weight = (
+                float(np.sum(weights[accepted])) if np.any(accepted) else 0.0
+            )
+            rows.append(
+                {
+                    "case_id": str(case_id),
+                    "case_name": str(case_name),
+                    "iteration": int(dump.iteration),
+                    "selection_mode": str(selection_mode),
+                    "selected_particle_iteration": selected_it,
+                    "theta_cut_mrad": float(theta_cut),
+                    "E_min_MeV": float(e_cut),
+                    "accepted_charge_pC": accepted_weight * E_CHARGE_C / 1.0e-12,
+                    "accepted_weight": accepted_weight,
+                    "accepted_n_macroparticles": int(np.count_nonzero(accepted)),
+                    "longitudinal_coordinate": longitudinal,
+                    "forward_only": bool(forward_only),
+                }
+            )
+
+    return rows
+
+
+def write_acceptance_curves_csv(rows: list[dict[str, Any]], path: str | Path) -> Path:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    if not rows:
+        raise ValueError("No particle acceptance curve rows to write")
+
+    with path.open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=PARTICLE_ACCEPTANCE_COLUMNS)
+        writer.writeheader()
+        writer.writerows(rows)
+
+    return path
 
 
 def write_summary_csv(rows: list[dict[str, Any]], path: str | Path) -> Path:

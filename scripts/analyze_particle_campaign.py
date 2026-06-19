@@ -13,6 +13,19 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 
+def parse_float_list(text: str) -> list[float]:
+    values: list[float] = []
+    for raw in str(text).replace(",", " ").split():
+        values.append(float(raw))
+    if not values:
+        raise argparse.ArgumentTypeError("expected at least one numeric value")
+    return values
+
+
+def format_float_list(values: list[float]) -> str:
+    return ",".join(str(float(v)) for v in values)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Run particle analysis over a campaign of WarpX particle diagnostics."
@@ -51,6 +64,24 @@ def main() -> None:
     parser.add_argument("--spectrum-emin-mev", type=float, default=0.0)
     parser.add_argument("--spectrum-log-y", action="store_true")
     parser.add_argument("--max-phase-points", type=int, default=200_000)
+    parser.add_argument(
+        "--acceptance-theta-cuts-mrad",
+        type=parse_float_list,
+        default=parse_float_list("2,5,10,20,50"),
+        help=(
+            "Comma- or whitespace-separated theta_r cuts in mrad for "
+            "particle_acceptance_curves.csv."
+        ),
+    )
+    parser.add_argument(
+        "--acceptance-energy-cuts-mev",
+        type=parse_float_list,
+        default=parse_float_list("10,25,50,100,150,200,250,300"),
+        help=(
+            "Comma- or whitespace-separated minimum kinetic energies in MeV "
+            "for particle_acceptance_curves.csv."
+        ),
+    )
     parser.add_argument(
         "--outdir-name",
         default="particle_analysis",
@@ -118,6 +149,10 @@ def main() -> None:
             str(args.spectrum_emin_mev),
             "--max-phase-points",
             str(args.max_phase_points),
+            "--acceptance-theta-cuts-mrad",
+            format_float_list(args.acceptance_theta_cuts_mrad),
+            "--acceptance-energy-cuts-mev",
+            format_float_list(args.acceptance_energy_cuts_mev),
         ]
 
         if args.target_propagation_mm is not None:

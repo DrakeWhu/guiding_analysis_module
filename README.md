@@ -174,6 +174,57 @@ Check how many reduced cases exist:
 find "$ROOT" -maxdepth 2 -name guiding_metrics.csv | wc -l
 ```
 
+
+## Particle reduced outputs
+
+Particle analysis reads WarpX openPMD/HDF5 particle diagnostics from:
+
+```text
+CASE_DIR/diags/plasma_electrons
+```
+
+for the current SUNRISE campaign convention. The internal openPMD species name is:
+
+```text
+electrons
+```
+
+The persistent reduced particle outputs are written under:
+
+```text
+CASE_DIR/particle_analysis/
+```
+
+The main summary file is:
+
+```text
+CASE_DIR/particle_analysis/particle_summary.csv
+```
+
+A second reduced file stores accepted-charge curves:
+
+```text
+CASE_DIR/particle_analysis/particle_acceptance_curves.csv
+```
+
+Each row represents an accepted charge under simultaneous energy and divergence cuts:
+
+```text
+Q(E >= E_min_MeV, theta_r <= theta_cut_mrad)
+```
+
+Default cuts are:
+
+```text
+theta_cut_mrad = 2, 5, 10, 20, 50
+E_min_MeV      = 10, 25, 50, 100, 150, 200, 250, 300
+```
+
+The intended use is channel-vs-uniform comparison after raw HDF5 cleanup. The file is small enough to keep as a persistent reduced diagnostic and avoids depending on phase-space plots or full spectra.
+
+For vacuum cases or cases without particle diagnostics, the campaign workflow may skip particle analysis. In that situation this file is not required.
+
+
 ## Triplet analysis
 
 Triplets are built from reduced per-case CSV files whenever possible.
