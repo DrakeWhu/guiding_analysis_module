@@ -8,6 +8,7 @@ from pathlib import Path
 from cap_guiding.beamlike_pairs import (
     BeamlikePairConfig,
     classify_pair_row,
+    classify_transverse_pair_row,
     compare_beamlike_pair_csvs,
     compare_beamlike_pair_rows,
     read_particle_summary_row,
@@ -214,6 +215,120 @@ class BeamlikePairComparisonTests(unittest.TestCase):
         for bucket_name, bucket_rows in buckets.items():
             for row in bucket_rows:
                 self.assertEqual(row["comparison_bucket"], bucket_name)
+
+    def transverse_row(
+        self,
+        *,
+        score: float,
+        theta_rms: float,
+        theta_p95: float = 10.0,
+        emit_x: float = 1.0,
+        emit_y: float = 1.2,
+    ) -> dict[str, object]:
+        row = self.good_row(score=100.0)
+        row.update(
+            {
+                "transverse_status": "ok",
+                "n_macroparticles_transverse": 900,
+                "weight_transverse": 1.5e9,
+                "theta_x_rms_mrad": theta_rms / math.sqrt(2.0),
+                "theta_y_rms_mrad": theta_rms / math.sqrt(2.0),
+                "theta_rms_mrad": theta_rms,
+                "theta_x_p95_mrad": theta_p95 / math.sqrt(2.0),
+                "theta_y_p95_mrad": theta_p95 / math.sqrt(2.0),
+                "theta_r_p95_mrad": theta_p95,
+                "x_rms_um": 2.0,
+                "y_rms_um": 3.0,
+                "x_p95_um": 5.0,
+                "y_p95_um": 6.0,
+                "emit_x_norm_mm_mrad": emit_x,
+                "emit_y_norm_mm_mrad": emit_y,
+                "emit_geom_norm_mm_mrad": math.sqrt(emit_x * emit_y),
+                "transverse_theta_rms_component": 0.5,
+                "transverse_theta_p95_component": 0.6,
+                "transverse_emit_component": 0.7,
+                "beam_transverse_quality_score": score,
+            }
+        )
+        return row
+
+    def test_transverse_quality_channel_better_gets_positive_gain(self) -> None:
+        row = compare_beamlike_pair_rows(
+            channel=self.transverse_row(score=500.0, theta_rms=2.0),
+            uniform=self.transverse_row(score=100.0, theta_rms=8.0),
+        )
+
+        self.assertEqual(row["status"], "ok")
+        self.assertEqual(row["comparison_bucket"], "neutral")
+        self.assertEqual(row["transverse_comparison_status"], "ok")
+        self.assertEqual(row["transverse_comparison_bucket"], "positive")
+        self.assertEqual(classify_transverse_pair_row(row), "positive")
+        self.assertGreater(row["transverse_reference_factor"], 0.0)
+        self.assertGreater(row["transverse_gain_score"], 0.0)
+
+    def test_transverse_quality_channel_worse_gets_negative_gain(self) -> None:
+        row = compare_beamlike_pair_rows(
+            channel=self.transverse_row(score=100.0, theta_rms=8.0),
+            uniform=self.transverse_row(score=500.0, theta_rms=2.0),
+        )
+
+        self.assertEqual(row["transverse_comparison_bucket"], "negative")
+        self.assertLess(row["transverse_reference_factor"], 0.0)
+        self.assertLess(row["transverse_gain_score"], 0.0)
+
+    def test_transverse_metrics_are_copied_and_lower_is_better_improves(self) -> None:
+        row = compare_beamlike_pair_rows(
+            channel=self.transverse_row(
+                score=500.0,
+                theta_rms=2.0,
+                theta_p95=5.0,
+                emit_x=0.5,
+                emit_y=0.8,
+            ),
+            uniform=self.transverse_row(
+                score=100.0,
+                theta_rms=8.0,
+                theta_p95=20.0,
+                emit_x=2.5,
+                emit_y=3.0,
+            ),
+        )
+
+        self.assertEqual(row["theta_rms_mrad_channel"], 2.0)
+        self.assertEqual(row["theta_rms_mrad_uniform"], 8.0)
+        self.assertEqual(row["theta_rms_mrad_delta"], -6.0)
+        self.assertEqual(row["theta_rms_mrad_improvement"], 6.0)
+        self.assertEqual(row["divergence_improvement_mrad"], 6.0)
+        self.assertEqual(row["emit_x_norm_mm_mrad_improvement"], 2.0)
+        self.assertGreater(row["beam_transverse_quality_score_ratio"], 1.0)
+
+    def test_missing_transverse_metrics_do_not_fail_beamlike_pair(self) -> None:
+        row = compare_beamlike_pair_rows(
+            channel=self.good_row(score=500.0),
+            uniform=self.good_row(score=100.0),
+        )
+
+        self.assertEqual(row["status"], "ok")
+        self.assertEqual(row["comparison_bucket"], "positive")
+        self.assertEqual(row["transverse_comparison_status"], "failed")
+        self.assertEqual(row["transverse_comparison_bucket"], "failed")
+        self.assertTrue(math.isnan(row["transverse_gain_score"]))
+
+    def test_transverse_columns_are_written_to_pair_csv(self) -> None:
+        row = compare_beamlike_pair_rows(
+            channel=self.transverse_row(score=500.0, theta_rms=2.0),
+            uniform=self.transverse_row(score=100.0, theta_rms=8.0),
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "beamlike_pair_scores.csv"
+            write_rows_csv(path, [row])
+            header = path.read_text(encoding="utf-8").splitlines()[0].split(",")
+
+        self.assertIn("transverse_comparison_bucket", header)
+        self.assertIn("transverse_gain_score", header)
+        self.assertIn("theta_r_p95_mrad_channel", header)
+        self.assertIn("emit_x_norm_mm_mrad_improvement", header)
 
 
 if __name__ == "__main__":

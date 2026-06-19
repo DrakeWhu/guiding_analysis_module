@@ -14,11 +14,67 @@ class BeamlikePairConfig:
 
     The absolute beamlike_score remains a per-case metric. This comparison layer
     asks whether a channel case beats its matched uniform reference.
+
+    The transverse comparison is intentionally separate: it compares the
+    per-case beam_transverse_quality_score without changing beamlike_score or
+    the main beamlike comparison_bucket.
     """
 
     reference_deadband_log: float = math.log(1.05)
     reference_scale_log: float = math.log(1.5)
     score_floor: float = 1.0
+
+    transverse_reference_deadband_log: float = math.log(1.05)
+    transverse_reference_scale_log: float = math.log(1.5)
+    transverse_score_floor: float = 1.0
+
+
+TRANSVERSE_PAIR_METRICS = [
+    "n_macroparticles_transverse",
+    "weight_transverse",
+    "theta_x_rms_mrad",
+    "theta_y_rms_mrad",
+    "theta_rms_mrad",
+    "theta_x_p95_mrad",
+    "theta_y_p95_mrad",
+    "theta_r_p95_mrad",
+    "x_rms_um",
+    "y_rms_um",
+    "x_p95_um",
+    "y_p95_um",
+    "emit_x_norm_mm_mrad",
+    "emit_y_norm_mm_mrad",
+    "emit_geom_norm_mm_mrad",
+    "transverse_theta_rms_component",
+    "transverse_theta_p95_component",
+    "transverse_emit_component",
+    "beam_transverse_quality_score",
+]
+
+
+TRANSVERSE_LOWER_IS_BETTER_METRICS = [
+    "theta_x_rms_mrad",
+    "theta_y_rms_mrad",
+    "theta_rms_mrad",
+    "theta_x_p95_mrad",
+    "theta_y_p95_mrad",
+    "theta_r_p95_mrad",
+    "x_rms_um",
+    "y_rms_um",
+    "x_p95_um",
+    "y_p95_um",
+    "emit_x_norm_mm_mrad",
+    "emit_y_norm_mm_mrad",
+    "emit_geom_norm_mm_mrad",
+]
+
+
+def _paired_metric_columns(metrics: list[str]) -> list[str]:
+    return [
+        f"{metric}_{suffix}"
+        for metric in metrics
+        for suffix in ("channel", "uniform", "delta", "ratio")
+    ]
 
 
 PAIR_OUTPUT_COLUMNS = [
@@ -26,6 +82,8 @@ PAIR_OUTPUT_COLUMNS = [
     "failure_reason",
     "comparison_status",
     "comparison_bucket",
+    "transverse_comparison_status",
+    "transverse_comparison_bucket",
     "channel_case_id",
     "uniform_case_id",
     "channel_csv",
@@ -49,6 +107,16 @@ PAIR_OUTPUT_COLUMNS = [
     "beamlike_reference_factor",
     "beamlike_reference_scale_score",
     "beamlike_gain_score",
+    "transverse_status_channel",
+    "transverse_status_uniform",
+    "beam_transverse_quality_score_channel",
+    "beam_transverse_quality_score_uniform",
+    "beam_transverse_quality_score_delta",
+    "beam_transverse_quality_score_ratio",
+    "beam_transverse_quality_score_log_advantage",
+    "transverse_reference_factor",
+    "transverse_reference_scale_score",
+    "transverse_gain_score",
     "beam_yield_score_channel",
     "beam_yield_score_uniform",
     "beam_yield_score_delta",
@@ -81,10 +149,8 @@ PAIR_OUTPUT_COLUMNS = [
     "z_span_hot_mm_uniform",
     "z_span_hot_mm_delta",
     "z_span_hot_mm_ratio",
-    "theta_rms_mrad_channel",
-    "theta_rms_mrad_uniform",
-    "theta_rms_mrad_delta",
-    "theta_rms_mrad_ratio",
+    *_paired_metric_columns(TRANSVERSE_PAIR_METRICS),
+    *[f"{metric}_improvement" for metric in TRANSVERSE_LOWER_IS_BETTER_METRICS],
     "divergence_improvement_mrad",
 ]
 
@@ -167,6 +233,27 @@ def classify_pair_row(row: dict[str, Any]) -> str:
         return "failed"
 
     reference_factor = _finite_float(row, "beamlike_reference_factor")
+    if not math.isfinite(reference_factor):
+        return "failed"
+
+    if reference_factor > 0.0:
+        return "positive"
+    if reference_factor < 0.0:
+        return "negative"
+    return "neutral"
+
+
+def classify_transverse_pair_row(row: dict[str, Any]) -> str:
+    """Classify the transverse-quality comparison only.
+
+    This deliberately does not affect comparison_bucket, which remains the
+    acceleration/beamlike bucket for backwards-compatible CSV semantics.
+    """
+    status = str(row.get("transverse_comparison_status", "")).strip().lower()
+    if status != "ok":
+        return "failed"
+
+    reference_factor = _finite_float(row, "transverse_reference_factor")
     if not math.isfinite(reference_factor):
         return "failed"
 
@@ -280,6 +367,68 @@ def _metric_pair(
     out[f"{metric}_ratio"] = _safe_ratio(ch, uni)
 
 
+def _lower_is_better_improvement(
+    out: dict[str, Any],
+    *,
+    metric: str,
+) -> None:
+    ch = _finite_float(out, f"{metric}_channel")
+    uni = _finite_float(out, f"{metric}_uniform")
+    out[f"{metric}_improvement"] = (
+        uni - ch if math.isfinite(ch) and math.isfinite(uni) else float("nan")
+    )
+
+
+def _add_transverse_comparison_metrics(
+    out: dict[str, Any],
+    *,
+    channel: dict[str, Any],
+    uniform: dict[str, Any],
+    config: BeamlikePairConfig,
+) -> None:
+    out["transverse_status_channel"] = _string_value(channel, "transverse_status")
+    out["transverse_status_uniform"] = _string_value(uniform, "transverse_status")
+
+    for metric in TRANSVERSE_PAIR_METRICS:
+        _metric_pair(out, channel=channel, uniform=uniform, metric=metric)
+
+    for metric in TRANSVERSE_LOWER_IS_BETTER_METRICS:
+        _lower_is_better_improvement(out, metric=metric)
+
+    score_ch = _finite_float(channel, "beam_transverse_quality_score")
+    score_uni = _finite_float(uniform, "beam_transverse_quality_score")
+
+    if math.isfinite(score_ch) and math.isfinite(score_uni):
+        log_advantage = math.log(
+            (score_ch + config.transverse_score_floor)
+            / (score_uni + config.transverse_score_floor)
+        )
+        reference_factor = _reference_factor_from_log_advantage(
+            log_advantage,
+            deadband_log=config.transverse_reference_deadband_log,
+            scale_log=config.transverse_reference_scale_log,
+        )
+        reference_scale_score = max(score_ch, score_uni)
+        gain_score = (
+            reference_scale_score * reference_factor
+            if math.isfinite(reference_factor)
+            else float("nan")
+        )
+        out["transverse_comparison_status"] = "ok"
+        out["beam_transverse_quality_score_log_advantage"] = log_advantage
+        out["transverse_reference_factor"] = reference_factor
+        out["transverse_reference_scale_score"] = reference_scale_score
+        out["transverse_gain_score"] = gain_score
+    else:
+        out["transverse_comparison_status"] = "failed"
+        out["beam_transverse_quality_score_log_advantage"] = float("nan")
+        out["transverse_reference_factor"] = float("nan")
+        out["transverse_reference_scale_score"] = float("nan")
+        out["transverse_gain_score"] = float("nan")
+
+    out["transverse_comparison_bucket"] = classify_transverse_pair_row(out)
+
+
 def compare_beamlike_pair_rows(
     *,
     channel: dict[str, Any],
@@ -321,6 +470,8 @@ def compare_beamlike_pair_rows(
         "failure_reason": "",
         "comparison_status": "ok",
         "comparison_bucket": "",
+        "transverse_comparison_status": "",
+        "transverse_comparison_bucket": "",
         "channel_case_id": channel_case_id or _string_value(channel, "case_id"),
         "uniform_case_id": uniform_case_id or _string_value(uniform, "case_id"),
         "channel_csv": "" if channel_csv is None else str(channel_csv),
@@ -359,17 +510,17 @@ def compare_beamlike_pair_rows(
         "Emax_hot_MeV",
         "mono_proxy_E95_over_Emax",
         "z_span_hot_mm",
-        "theta_rms_mrad",
     ]:
         _metric_pair(out, channel=channel, uniform=uniform, metric=metric)
 
-    theta_ch = out["theta_rms_mrad_channel"]
-    theta_uni = out["theta_rms_mrad_uniform"]
-    out["divergence_improvement_mrad"] = (
-        theta_uni - theta_ch
-        if math.isfinite(theta_ch) and math.isfinite(theta_uni)
-        else float("nan")
+    _add_transverse_comparison_metrics(
+        out,
+        channel=channel,
+        uniform=uniform,
+        config=cfg,
     )
+
+    out["divergence_improvement_mrad"] = out["theta_rms_mrad_improvement"]
 
     out["comparison_bucket"] = classify_pair_row(out)
 
@@ -390,6 +541,8 @@ def compare_beamlike_pair_csvs(
         "failure_reason": "",
         "comparison_status": "failed",
         "comparison_bucket": "failed",
+        "transverse_comparison_status": "failed",
+        "transverse_comparison_bucket": "failed",
         "channel_case_id": channel_case_id or "",
         "uniform_case_id": uniform_case_id or "",
         "channel_csv": str(channel_csv),
@@ -398,6 +551,7 @@ def compare_beamlike_pair_csvs(
         "beamlike_score_source_channel": "",
         "beamlike_score_source_uniform": "",
         "beamlike_gain_score": float("nan"),
+        "transverse_gain_score": float("nan"),
     }
 
     try:
