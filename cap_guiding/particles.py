@@ -278,7 +278,7 @@ def summarize_dump(
             }
         )
 
-        return add_beamlike_metrics(row, config=beamlike_config)
+    return add_beamlike_metrics(row, config=beamlike_config)
 
 
 def write_summary_csv(rows: list[dict[str, Any]], path: str | Path) -> Path:

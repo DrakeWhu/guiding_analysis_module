@@ -223,6 +223,36 @@ class BeamlikeScoringTests(unittest.TestCase):
         self.assertIn("beamlike_score", row)
         self.assertEqual(row["eligible_beamlike"], False)
 
+    def test_summarize_dump_returns_dict_when_hot_electrons_exist(self) -> None:
+        import numpy as np
+
+        from cap_guiding.particles import ParticleDump, summarize_dump
+
+        dump = ParticleDump(
+            iteration=1,
+            time_fs=0.0,
+            x_m=np.array([0.0, 1.0e-6, 2.0e-6]),
+            y_m=np.array([0.0, 0.0, 0.0]),
+            z_m=np.array([0.0, 1.0e-6, 2.0e-6]),
+            ux=np.array([0.0, 0.0, 0.0]),
+            uy=np.array([0.0, 0.0, 0.0]),
+            uz=np.array([50.0, 60.0, 70.0]),
+            w=np.array([1.0, 1.0, 1.0]),
+        )
+
+        row = summarize_dump(
+            dump,
+            hot_energy_mev=10.0,
+            longitudinal="z",
+            forward_only=True,
+        )
+
+        self.assertIsInstance(row, dict)
+        self.assertGreater(row["n_macroparticles_hot"], 0)
+        self.assertGreater(row["charge_hot_pC"], 0.0)
+        self.assertIn("E95_hot_MeV", row)
+        self.assertIn("beamlike_score", row)
+
 
 if __name__ == "__main__":
     unittest.main()
