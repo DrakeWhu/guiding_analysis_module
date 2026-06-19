@@ -15,6 +15,7 @@ import numpy as np
 from .beamlike import BeamlikeConfig, add_beamlike_metrics
 from .metrics import E_CHARGE_C
 from .openpmd_io import open_series, get_iterations
+from .transverse import summarize_transverse_metrics
 
 ELECTRON_REST_ENERGY_MEV = 0.51099895
 DEFAULT_PARTICLE_VARS = ["x", "y", "z", "ux", "uy", "uz", "w"]
@@ -278,7 +279,16 @@ def summarize_dump(
             }
         )
 
-    return add_beamlike_metrics(row, config=beamlike_config)
+    out = add_beamlike_metrics(row, config=beamlike_config)
+    out.update(
+        summarize_transverse_metrics(
+            dump,
+            mask=hot,
+            longitudinal=longitudinal,
+        )
+    )
+
+    return out
 
 
 def write_summary_csv(rows: list[dict[str, Any]], path: str | Path) -> Path:
