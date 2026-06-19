@@ -14,6 +14,7 @@ from cap_guiding.joint_scores import (
     bucket_counts,
     compute_joint_correlations,
     load_and_join_guiding_beamlike,
+    triple_bucket_counts,
     write_joint_outputs,
 )
 
@@ -126,6 +127,7 @@ def main() -> None:
 
     paths = write_joint_outputs(outdir=outdir, joined=joined, top=args.top)
     counts = bucket_counts(joined)
+    triple_counts = triple_bucket_counts(joined)
     correlations = compute_joint_correlations(joined)
 
     print("=== Guiding + beamlike joint summary ===")
@@ -137,10 +139,18 @@ def main() -> None:
     print()
 
     if len(counts):
-        print("Joint buckets:")
+        print("Joint buckets (guiding + beam):")
         print(counts.to_string(index=False))
     else:
         print("No joint buckets.")
+
+    print()
+
+    if len(triple_counts):
+        print("Triple buckets (guiding + beam + transverse):")
+        print(triple_counts.to_string(index=False))
+    else:
+        print("No triple buckets.")
 
     print()
     print("Outputs:")
@@ -165,12 +175,21 @@ def main() -> None:
         "guiding_reference_factor",
         "beam_beamlike_gain_score",
         "beam_beamlike_reference_factor",
+        "beam_transverse_gain_score",
+        "beam_transverse_reference_factor",
         "joint_positive_score",
+        "triple_positive_score",
+        "transverse_bucket",
+        "triple_bucket",
         "guiding_a0_exit_channel",
         "beam_E95_hot_MeV_channel",
         "beam_charge_hot_pC_channel",
         "guiding_waist_growth_channel",
         "beam_z_span_hot_mm_channel",
+        "beam_theta_rms_mrad_channel",
+        "beam_theta_r_p95_mrad_channel",
+        "beam_emit_x_norm_mm_mrad_channel",
+        "beam_emit_y_norm_mm_mrad_channel",
         "plateau",
         "diameter",
         "focus",
@@ -211,6 +230,63 @@ def main() -> None:
             _print_rows(contradictions, visible_cols + ["joint_bucket"])
         else:
             print("No hard guiding/beam contradictions.")
+        print()
+
+        if "triple_bucket" in joined.columns:
+            triple_positive = joined[
+                joined["triple_bucket"]
+                == "guiding_positive__beam_positive__transverse_positive"
+            ].copy()
+            triple_positive = triple_positive.sort_values(
+                "triple_positive_score",
+                ascending=False,
+            ).head(args.top)
+
+            if len(triple_positive):
+                print(f"Top {len(triple_positive)} three-leg positive cases:")
+                _print_rows(triple_positive, visible_cols)
+            else:
+                print("No three-leg positive cases.")
+
+            print()
+
+            good_beam_bad_transverse = joined[
+                joined["triple_bucket"]
+                == "guiding_positive__beam_positive__transverse_negative"
+            ].copy()
+            good_beam_bad_transverse = good_beam_bad_transverse.sort_values(
+                "joint_positive_score",
+                ascending=False,
+            ).head(args.top)
+
+            if len(good_beam_bad_transverse):
+                print(
+                    f"Top {len(good_beam_bad_transverse)} "
+                    "guiding+beam positive but transverse negative cases:"
+                )
+                _print_rows(good_beam_bad_transverse, visible_cols)
+            else:
+                print("No guiding+beam positive but transverse negative cases.")
+
+            print()
+
+            rare_good_beam = joined[
+                joined["triple_bucket"]
+                == "guiding_negative__beam_positive__transverse_positive"
+            ].copy()
+            rare_good_beam = rare_good_beam.sort_values(
+                "triple_positive_score",
+                ascending=False,
+            ).head(args.top)
+
+            if len(rare_good_beam):
+                print(
+                    f"Top {len(rare_good_beam)} "
+                    "guiding-negative but beam+transverse-positive cases:"
+                )
+                _print_rows(rare_good_beam, visible_cols)
+            else:
+                print("No guiding-negative but beam+transverse-positive cases.")
 
 
 if __name__ == "__main__":

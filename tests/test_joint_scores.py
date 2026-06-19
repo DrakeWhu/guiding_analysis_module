@@ -10,6 +10,7 @@ from cap_guiding.joint_scores import (
     bucket_counts,
     compute_joint_correlations,
     load_and_join_guiding_beamlike,
+    triple_bucket_counts,
     write_joint_outputs,
 )
 
@@ -183,6 +184,209 @@ class JointGuidingBeamlikeTests(unittest.TestCase):
         self.assertGreaterEqual(len(corr), 1)
         self.assertIn("pearson", corr.columns)
         self.assertIn("spearman", corr.columns)
+
+    def test_join_classifies_triple_positive_when_transverse_is_positive(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            guiding = root / "triplet_scores.csv"
+            beam = root / "beamlike_pair_scores.csv"
+
+            self.write_csv(
+                guiding,
+                [
+                    {
+                        "status": "ok",
+                        "channel_case_id": "chan",
+                        "uniform_case_id": "uni",
+                        "final_score": 27.0,
+                        "reference_factor": 0.5,
+                    }
+                ],
+            )
+            self.write_csv(
+                beam,
+                [
+                    {
+                        "status": "ok",
+                        "comparison_bucket": "positive",
+                        "transverse_comparison_status": "ok",
+                        "transverse_comparison_bucket": "positive",
+                        "channel_case_id": "chan",
+                        "uniform_case_id": "uni",
+                        "beamlike_gain_score": 8.0,
+                        "beamlike_reference_factor": 0.2,
+                        "transverse_gain_score": 64.0,
+                        "transverse_reference_factor": 0.7,
+                    }
+                ],
+            )
+
+            joined = load_and_join_guiding_beamlike(
+                triplet_scores_csv=guiding,
+                beamlike_pair_scores_csv=beam,
+            )
+
+            row = joined.iloc[0]
+            self.assertEqual(row["joint_bucket"], "guiding_positive__beam_positive")
+            self.assertEqual(row["transverse_bucket"], "positive")
+            self.assertEqual(
+                row["triple_bucket"],
+                "guiding_positive__beam_positive__transverse_positive",
+            )
+            self.assertEqual(row["triple_status"], "ok")
+            self.assertGreater(row["guiding_beam_transverse_alignment_factor"], 0.0)
+            self.assertAlmostEqual(row["triple_positive_score"], 24.0)
+
+    def test_triple_bucket_detects_good_acceleration_but_bad_transverse_quality(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            guiding = root / "triplet_scores.csv"
+            beam = root / "beamlike_pair_scores.csv"
+
+            self.write_csv(
+                guiding,
+                [
+                    {
+                        "status": "ok",
+                        "channel_case_id": "chan",
+                        "uniform_case_id": "uni",
+                        "final_score": 20.0,
+                        "reference_factor": 0.5,
+                    }
+                ],
+            )
+            self.write_csv(
+                beam,
+                [
+                    {
+                        "status": "ok",
+                        "comparison_bucket": "positive",
+                        "transverse_comparison_status": "ok",
+                        "transverse_comparison_bucket": "negative",
+                        "channel_case_id": "chan",
+                        "uniform_case_id": "uni",
+                        "beamlike_gain_score": 9.0,
+                        "beamlike_reference_factor": 0.3,
+                        "transverse_gain_score": -5.0,
+                        "transverse_reference_factor": -0.4,
+                    }
+                ],
+            )
+
+            joined = load_and_join_guiding_beamlike(
+                triplet_scores_csv=guiding,
+                beamlike_pair_scores_csv=beam,
+            )
+
+            row = joined.iloc[0]
+            self.assertEqual(row["joint_bucket"], "guiding_positive__beam_positive")
+            self.assertEqual(row["transverse_bucket"], "negative")
+            self.assertEqual(
+                row["triple_bucket"],
+                "guiding_positive__beam_positive__transverse_negative",
+            )
+            self.assertEqual(row["triple_positive_score"], 0.0)
+
+    def test_missing_transverse_comparison_preserves_legacy_joint_bucket(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            guiding = root / "triplet_scores.csv"
+            beam = root / "beamlike_pair_scores.csv"
+
+            self.write_csv(
+                guiding,
+                [
+                    {
+                        "status": "ok",
+                        "channel_case_id": "chan",
+                        "uniform_case_id": "uni",
+                        "final_score": 20.0,
+                        "reference_factor": 0.5,
+                    }
+                ],
+            )
+            self.write_csv(
+                beam,
+                [
+                    {
+                        "status": "ok",
+                        "comparison_bucket": "positive",
+                        "channel_case_id": "chan",
+                        "uniform_case_id": "uni",
+                        "beamlike_gain_score": 9.0,
+                        "beamlike_reference_factor": 0.2,
+                    }
+                ],
+            )
+
+            joined = load_and_join_guiding_beamlike(
+                triplet_scores_csv=guiding,
+                beamlike_pair_scores_csv=beam,
+            )
+
+            row = joined.iloc[0]
+            self.assertEqual(row["joint_bucket"], "guiding_positive__beam_positive")
+            self.assertEqual(row["transverse_bucket"], "failed")
+            self.assertEqual(row["triple_bucket"], "failed")
+            self.assertEqual(row["triple_status"], "failed")
+            self.assertEqual(row["joint_status"], "ok")
+
+    def test_triple_bucket_counts_and_outputs_are_written(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            guiding = root / "triplet_scores.csv"
+            beam = root / "beamlike_pair_scores.csv"
+            outdir = root / "out"
+
+            self.write_csv(
+                guiding,
+                [
+                    {
+                        "status": "ok",
+                        "channel_case_id": "chan",
+                        "uniform_case_id": "uni",
+                        "final_score": 27.0,
+                        "reference_factor": 0.5,
+                    }
+                ],
+            )
+            self.write_csv(
+                beam,
+                [
+                    {
+                        "status": "ok",
+                        "comparison_bucket": "positive",
+                        "transverse_comparison_status": "ok",
+                        "transverse_comparison_bucket": "positive",
+                        "channel_case_id": "chan",
+                        "uniform_case_id": "uni",
+                        "beamlike_gain_score": 8.0,
+                        "beamlike_reference_factor": 0.2,
+                        "transverse_gain_score": 64.0,
+                        "transverse_reference_factor": 0.7,
+                    }
+                ],
+            )
+
+            joined = load_and_join_guiding_beamlike(
+                triplet_scores_csv=guiding,
+                beamlike_pair_scores_csv=beam,
+            )
+            counts = triple_bucket_counts(joined)
+            paths = write_joint_outputs(outdir=outdir, joined=joined, top=10)
+
+            self.assertEqual(int(counts["count"].sum()), 1)
+            self.assertIn("joined_triple", paths)
+            self.assertIn("triple_bucket_counts", paths)
+            self.assertIn("triple_positive", paths)
+            for path in paths.values():
+                self.assertTrue(path.is_file())
+
+            triple_positive = pd.read_csv(paths["triple_positive"])
+            self.assertEqual(len(triple_positive), 1)
+            self.assertIn("triple_bucket", triple_positive.columns)
 
 
 if __name__ == "__main__":
