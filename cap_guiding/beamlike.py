@@ -326,7 +326,8 @@ def add_beamlike_metrics(
     *,
     config: BeamlikeConfig | None = None,
 ) -> dict[str, Any]:
-    """Return a copy of row with beamlike metrics appended."""
+    """Return a copy of a particle summary row with beamlike metrics added."""
     out = dict(row)
-    out.update(score_particle_summary_row(row, config=config))
+    metrics = score_particle_summary_row(out, config=config)
+    out.update(metrics)
     return out

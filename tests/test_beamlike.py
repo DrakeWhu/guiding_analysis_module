@@ -176,6 +176,53 @@ class BeamlikeScoringTests(unittest.TestCase):
         self.assertFalse(strict["eligible_beamlike"])
         self.assertTrue(relaxed["eligible_beamlike"])
 
+    def test_add_beamlike_metrics_returns_dict_not_none(self) -> None:
+        row = {
+            "n_macroparticles_hot": 0,
+            "charge_hot_pC": 0.0,
+            "E95_hot_MeV": float("nan"),
+            "Emean_hot_MeV": float("nan"),
+            "Emax_hot_MeV": float("nan"),
+            "q_long_min_hot_mm": float("nan"),
+            "q_long_max_hot_mm": float("nan"),
+        }
+
+        out = add_beamlike_metrics(row)
+
+        self.assertIsInstance(out, dict)
+        self.assertIn("beamlike_score", out)
+        self.assertEqual(out["eligible_beamlike"], False)
+
+    def test_summarize_dump_returns_dict_when_no_hot_electrons(self) -> None:
+        import numpy as np
+
+        from cap_guiding.particles import ParticleDump, summarize_dump
+
+        dump = ParticleDump(
+            iteration=1,
+            time_fs=0.0,
+            x_m=np.array([0.0, 1.0e-6]),
+            y_m=np.array([0.0, 0.0]),
+            z_m=np.array([0.0, 1.0e-6]),
+            ux=np.array([0.0, 0.0]),
+            uy=np.array([0.0, 0.0]),
+            uz=np.array([0.0, 0.0]),
+            w=np.array([1.0, 1.0]),
+        )
+
+        row = summarize_dump(
+            dump,
+            hot_energy_mev=10.0,
+            longitudinal="z",
+            forward_only=True,
+        )
+
+        self.assertIsInstance(row, dict)
+        self.assertEqual(row["n_macroparticles_hot"], 0)
+        self.assertEqual(row["charge_hot_pC"], 0.0)
+        self.assertIn("beamlike_score", row)
+        self.assertEqual(row["eligible_beamlike"], False)
+
 
 if __name__ == "__main__":
     unittest.main()
