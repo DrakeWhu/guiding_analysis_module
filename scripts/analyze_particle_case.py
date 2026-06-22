@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from html import parser
 import shlex
 import sys
 import re
@@ -22,6 +23,7 @@ from cap_guiding.particles import (
     save_energy_spectrum,
     save_longitudinal_phase_space,
     save_longitudinal_energy_space,
+    save_transverse_phase_space_plots,
     summarize_dump,
     write_summary_csv,
     summarize_acceptance_curves,
@@ -368,6 +370,11 @@ def main() -> None:
     parser.add_argument("--skip-existing", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument(
+        "--plots-only",
+        action="store_true",
+        help="Regenerate plots without writing particle_summary.csv or particle_acceptance_curves.csv.",
+    )
+    parser.add_argument(
         "--downramp-mm",
         type=float,
         default=None,
@@ -404,11 +411,16 @@ def main() -> None:
     summary_csv = outdir / "particle_summary.csv"
     acceptance_csv = outdir / "particle_acceptance_curves.csv"
 
-    write_summary = args.overwrite or not summary_csv.exists()
-    write_acceptance = args.overwrite or not acceptance_csv.exists()
+    write_summary = (not args.plots_only) and (
+        args.overwrite or not summary_csv.exists()
+    )
+    write_acceptance = (not args.plots_only) and (
+        args.overwrite or not acceptance_csv.exists()
+    )
 
     if (
-        args.skip_existing
+        (not args.plots_only)
+        and args.skip_existing
         and not args.overwrite
         and not write_summary
         and not write_acceptance
@@ -416,7 +428,7 @@ def main() -> None:
         print(f"[SKIP] existing {summary_csv} and {acceptance_csv}")
         return
 
-    if not args.skip_existing and not args.overwrite:
+    if (not args.plots_only) and not args.skip_existing and not args.overwrite:
         existing = [str(p) for p in (summary_csv, acceptance_csv) if p.exists()]
         if existing:
             raise FileExistsError(
@@ -442,6 +454,7 @@ def main() -> None:
     print(f"downramp_mm      = {args.downramp_mm}")
     print(f"spectrum_emin    = {args.spectrum_emin_mev}")
     print(f"spectrum_log_y   = {args.spectrum_log_y}")
+    print(f"plots_only       = {args.plots_only}")
     print(f"accept_theta_mrad= {args.acceptance_theta_cuts_mrad}")
     print(f"accept_Emin_MeV  = {args.acceptance_energy_cuts_mev}")
     print("==============================")
@@ -543,18 +556,32 @@ def main() -> None:
                 forward_only=not args.no_forward_cut,
                 max_points=args.max_phase_points,
             )
+            save_transverse_phase_space_plots(
+                dump,
+                outdir=plots_dir,
+                suffix=suffix,
+                hot_energy_mev=args.hot_energy_mev,
+                longitudinal=args.longitudinal,
+                exit_window_mm=args.exit_window_mm,
+                forward_only=not args.no_forward_cut,
+                max_points=args.max_phase_points,
+            )
         except ValueError as exc:
             print(f"[WARN] skipping phase-space plot for iteration {iteration}: {exc}")
 
     if write_summary:
         write_summary_csv(rows, summary_csv)
         print(f"[OK] wrote {summary_csv}")
+    elif args.plots_only:
+        print(f"[PLOTS-ONLY] left unchanged {summary_csv}")
     else:
         print(f"[USE] existing {summary_csv}")
 
     if write_acceptance:
         write_acceptance_curves_csv(acceptance_rows, acceptance_csv)
         print(f"[OK] wrote {acceptance_csv}")
+    elif args.plots_only:
+        print(f"[PLOTS-ONLY] left unchanged {acceptance_csv}")
     else:
         print(f"[USE] existing {acceptance_csv}")
 

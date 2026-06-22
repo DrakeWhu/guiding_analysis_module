@@ -15,7 +15,7 @@ import numpy as np
 from .beamlike import BeamlikeConfig, add_beamlike_metrics
 from .metrics import E_CHARGE_C
 from .openpmd_io import open_series, get_iterations
-from .transverse import summarize_transverse_metrics
+from .transverse import MRAD_PER_RAD, UM_PER_M, summarize_transverse_metrics
 
 ELECTRON_REST_ENERGY_MEV = 0.51099895
 DEFAULT_PARTICLE_VARS = ["x", "y", "z", "ux", "uy", "uz", "w"]
@@ -659,6 +659,233 @@ def _scatter_style_for_npoints(n: int) -> tuple[float, float]:
     if n <= 20_000:
         return 2.5, 0.45
     return 1.0, 0.30
+
+
+def _transverse_plot_arrays_z(
+    dump: ParticleDump,
+    mask: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    selection = np.asarray(mask, dtype=bool)
+    if selection.shape != np.asarray(dump.w).shape:
+        raise ValueError(
+            "Transverse plot mask shape mismatch: "
+            f"mask.shape={selection.shape}, w.shape={np.asarray(dump.w).shape}"
+        )
+
+    energy = dump.kinetic_energy_mev
+    valid = (
+        selection
+        & np.isfinite(dump.x_m)
+        & np.isfinite(dump.y_m)
+        & np.isfinite(dump.ux)
+        & np.isfinite(dump.uy)
+        & np.isfinite(dump.uz)
+        & np.isfinite(dump.w)
+        & np.isfinite(energy)
+        & (dump.w > 0.0)
+    )
+
+    x_um = np.asarray(dump.x_m[valid], dtype=float) * UM_PER_M
+    y_um = np.asarray(dump.y_m[valid], dtype=float) * UM_PER_M
+    theta_x_mrad = np.arctan2(dump.ux[valid], dump.uz[valid]) * MRAD_PER_RAD
+    theta_y_mrad = np.arctan2(dump.uy[valid], dump.uz[valid]) * MRAD_PER_RAD
+    e_mev = np.asarray(energy[valid], dtype=float)
+    weights = np.asarray(dump.w[valid], dtype=float)
+
+    return x_um, y_um, theta_x_mrad, theta_y_mrad, e_mev, weights
+
+
+def _format_float_for_plot(value: object, unit: str = "") -> str:
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return "nan"
+
+    if not np.isfinite(f):
+        return "nan"
+
+    return f"{f:.3g}{unit}"
+
+
+def _transverse_annotation(metrics: dict[str, Any], *, n_plotted: int) -> str:
+    n_selected = int(metrics.get("n_macroparticles_transverse", 0) or 0)
+
+    return (
+        f"N hot = {n_selected}, plotted = {int(n_plotted)}\n"
+        f"theta_r rms/p95 = "
+        f"{_format_float_for_plot(metrics.get('theta_rms_mrad'), ' mrad')} / "
+        f"{_format_float_for_plot(metrics.get('theta_r_p95_mrad'), ' mrad')}\n"
+        f"emit_n x/y/geom = "
+        f"{_format_float_for_plot(metrics.get('emit_x_norm_mm_mrad'), ' mm mrad')} / "
+        f"{_format_float_for_plot(metrics.get('emit_y_norm_mm_mrad'), ' mm mrad')} / "
+        f"{_format_float_for_plot(metrics.get('emit_geom_norm_mm_mrad'), ' mm mrad')}"
+    )
+
+
+def save_transverse_phase_space_plots(
+    dump: ParticleDump,
+    *,
+    outdir: str | Path,
+    suffix: str,
+    hot_energy_mev: float = 10.0,
+    longitudinal: str = "z",
+    exit_window_mm: float | None = None,
+    forward_only: bool = True,
+    max_points: int = 200_000,
+) -> list[Path]:
+    """Save transverse hot-electron phase-space plots for one dump.
+
+    The selected population is exactly the one returned by select_hot_electrons(),
+    matching summarize_dump() and the existing hot longitudinal plots.
+    """
+    outdir = Path(outdir)
+    outdir.mkdir(parents=True, exist_ok=True)
+
+    outputs = [
+        outdir / f"transverse_phase_space_x_thetax_hot_{suffix}.png",
+        outdir / f"transverse_phase_space_y_thetay_hot_{suffix}.png",
+        outdir / f"transverse_real_space_xy_hot_{suffix}.png",
+        outdir / f"transverse_divergence_thetax_thetay_hot_{suffix}.png",
+    ]
+
+    if longitudinal != "z":
+        paths: list[Path] = []
+        for path in outputs:
+            paths.append(
+                _save_no_data_plot(
+                    path=path,
+                    title="Hot-electron transverse phase space",
+                    message=(
+                        "Transverse x/y plots are only implemented "
+                        f"for longitudinal='z'\nreceived longitudinal={longitudinal!r}"
+                    ),
+                    xlabel="transverse coordinate",
+                    ylabel="transverse angle",
+                )
+            )
+        return paths
+
+    hot = select_hot_electrons(
+        dump,
+        hot_energy_mev=hot_energy_mev,
+        forward_only=forward_only,
+        longitudinal=longitudinal,
+        exit_window_mm=exit_window_mm,
+    )
+
+    metrics = summarize_transverse_metrics(
+        dump,
+        mask=hot,
+        longitudinal=longitudinal,
+    )
+
+    x_um, y_um, theta_x_mrad, theta_y_mrad, e_mev, _weights = _transverse_plot_arrays_z(
+        dump, hot
+    )
+
+    if x_um.size == 0:
+        paths = []
+        for path in outputs:
+            paths.append(
+                _save_no_data_plot(
+                    path=path,
+                    title=(
+                        f"Hot-electron transverse phase space, iteration {dump.iteration}"
+                    ),
+                    message=f"No selected electrons\nE >= {hot_energy_mev:g} MeV",
+                    xlabel="transverse coordinate [um]",
+                    ylabel="transverse angle [mrad]",
+                )
+            )
+        return paths
+
+    idx = np.arange(x_um.size)
+    if idx.size > max_points:
+        keep = np.linspace(0, idx.size - 1, int(max_points)).astype(int)
+        idx = idx[keep]
+
+    point_size, alpha = _scatter_style_for_npoints(int(idx.size))
+    annotation = _transverse_annotation(metrics, n_plotted=int(idx.size))
+
+    def save_scatter(
+        *,
+        path: Path,
+        x: np.ndarray,
+        y: np.ndarray,
+        xlabel: str,
+        ylabel: str,
+        title: str,
+    ) -> Path:
+        fig, ax = plt.subplots(figsize=(7.5, 4.8))
+        sc = ax.scatter(
+            x[idx],
+            y[idx],
+            s=point_size,
+            c=e_mev[idx],
+            alpha=alpha,
+            edgecolors="none",
+        )
+        cbar = fig.colorbar(sc, ax=ax)
+        cbar.set_label("Ekin [MeV]")
+
+        ax.text(
+            0.02,
+            0.98,
+            annotation,
+            ha="left",
+            va="top",
+            transform=ax.transAxes,
+            fontsize=8,
+        )
+
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(ylabel)
+        ax.set_title(
+            f"{title}, iteration {dump.iteration}\n"
+            f"E >= {hot_energy_mev:g} MeV, forward_only = {bool(forward_only)}"
+        )
+        ax.grid(True, alpha=0.25)
+
+        fig.tight_layout()
+        fig.savefig(path, dpi=180)
+        plt.close(fig)
+
+        return path
+
+    return [
+        save_scatter(
+            path=outputs[0],
+            x=x_um,
+            y=theta_x_mrad,
+            xlabel="x [um]",
+            ylabel="theta_x [mrad]",
+            title="Hot-electron transverse phase space x-theta_x",
+        ),
+        save_scatter(
+            path=outputs[1],
+            x=y_um,
+            y=theta_y_mrad,
+            xlabel="y [um]",
+            ylabel="theta_y [mrad]",
+            title="Hot-electron transverse phase space y-theta_y",
+        ),
+        save_scatter(
+            path=outputs[2],
+            x=x_um,
+            y=y_um,
+            xlabel="x [um]",
+            ylabel="y [um]",
+            title="Hot-electron transverse real space x-y",
+        ),
+        save_scatter(
+            path=outputs[3],
+            x=theta_x_mrad,
+            y=theta_y_mrad,
+            xlabel="theta_x [mrad]",
+            ylabel="theta_y [mrad]",
+            title="Hot-electron transverse divergence theta_x-theta_y",
+        ),
+    ]
 
 
 def save_longitudinal_phase_space(
