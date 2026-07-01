@@ -11,6 +11,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from cap_guiding.metrics import compute_case_rows, write_case_csv
 from cap_guiding.plots import save_case_plots
+from cap_guiding.singlecase_guiding import ensure_singlecase_guiding_score_csv
 
 
 def main() -> None:
@@ -50,7 +51,12 @@ def main() -> None:
     parser.add_argument(
         "--no-plots",
         action="store_true",
-        help="Only write guiding_metrics.csv.",
+        help="Only write guiding_metrics.csv and guiding_singlecase_score.csv.",
+    )
+    parser.add_argument(
+        "--no-singlecase-score",
+        action="store_true",
+        help="Do not write guiding_singlecase_score.csv sidecar.",
     )
     args = parser.parse_args()
 
@@ -60,6 +66,12 @@ def main() -> None:
 
     if csv_path.exists() and args.skip_existing and not args.overwrite:
         print(f"[SKIP] existing {csv_path}")
+        if not args.no_singlecase_score:
+            ensure_singlecase_guiding_score_csv(
+                csv_path,
+                case_id=outdir.name,
+                overwrite=False,
+            )
         return
 
     if csv_path.exists() and not args.overwrite:
@@ -90,6 +102,13 @@ def main() -> None:
 
     write_case_csv(rows, csv_path)
     print(f"[OK] wrote {csv_path}")
+
+    if not args.no_singlecase_score:
+        ensure_singlecase_guiding_score_csv(
+            csv_path,
+            case_id=outdir.name,
+            overwrite=True,
+        )
 
     if not args.no_plots:
         save_case_plots(rows, outdir)

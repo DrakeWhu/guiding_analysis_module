@@ -26,6 +26,7 @@ from cap_guiding.triplet import (
     build_triplet_tables,
     write_triplet_tables,
 )
+from cap_guiding.singlecase_guiding import ensure_singlecase_guiding_score_csv
 from cap_guiding.workflows import ensure_case_metrics
 
 CASE_PLOT_REQUIRED_COLUMNS = [
@@ -309,6 +310,11 @@ def main() -> None:
 
             if csv_valid and not args.overwrite_cases:
                 print(f"[USE] valid existing case metrics: {csv_path}")
+                ensure_singlecase_guiding_score_csv(
+                    csv_path,
+                    case_id=case.case_id,
+                    overwrite=False,
+                )
                 continue
 
             if csv_path.exists() and not csv_valid and not args.overwrite_cases:

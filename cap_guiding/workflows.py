@@ -4,6 +4,7 @@ from pathlib import Path
 
 from .metrics import compute_case_rows, write_case_csv
 from .plots import save_case_plots
+from .singlecase_guiding import ensure_singlecase_guiding_score_csv
 
 
 _FIELD_DIAG_NAMES = {"fields", "diag1"}
@@ -53,6 +54,7 @@ def ensure_case_metrics(
     lambda0_m: float = 0.8e-6,
     overwrite: bool = False,
     make_plots: bool = True,
+    write_singlecase_score: bool = True,
 ) -> Path:
     """Return guiding_metrics.csv, generating it if missing or overwrite=True."""
     diag = Path(diag)
@@ -66,6 +68,12 @@ def ensure_case_metrics(
 
     if csv_path.exists() and not overwrite:
         print(f"[USE] existing case metrics: {csv_path}")
+        if write_singlecase_score:
+            ensure_singlecase_guiding_score_csv(
+                csv_path,
+                case_id=case_id,
+                overwrite=False,
+            )
         return csv_path
 
     print(f"[MAKE] case metrics for {case_id}")
@@ -83,6 +91,13 @@ def ensure_case_metrics(
 
     write_case_csv(rows, csv_path)
     print(f"[OK] wrote {csv_path}")
+
+    if write_singlecase_score:
+        ensure_singlecase_guiding_score_csv(
+            csv_path,
+            case_id=case_id,
+            overwrite=True,
+        )
 
     if make_plots:
         save_case_plots(rows, outdir)
