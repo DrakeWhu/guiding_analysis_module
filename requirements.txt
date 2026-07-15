@@ -2,4 +2,5 @@ numpy
 pandas
 matplotlib
 imageio
+imageio-ffmpeg
 openpmd-viewer

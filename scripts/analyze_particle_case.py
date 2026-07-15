@@ -18,6 +18,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from cap_guiding.openpmd_io import open_series, get_iterations, describe_series
 from cap_guiding.particles import (
+    concatenate_particle_dumps,
     last_iteration,
     read_particle_dump,
     save_energy_spectrum,
@@ -28,6 +29,11 @@ from cap_guiding.particles import (
     write_summary_csv,
     summarize_acceptance_curves,
     write_acceptance_curves_csv,
+)
+from cap_guiding.soft50 import (
+    Soft50Config,
+    summarize_soft50_curve,
+    write_soft50_curve_csv,
 )
 
 
@@ -89,6 +95,35 @@ def parse_float_list(text: str) -> list[float]:
     if not values:
         raise argparse.ArgumentTypeError("expected at least one numeric value")
     return values
+
+
+def parse_species_list(text: str) -> list[str]:
+    values = [value.strip() for value in str(text).replace(",", " ").split()]
+    values = [value for value in values if value]
+    if not values:
+        raise argparse.ArgumentTypeError("expected at least one species name")
+    if len(values) != len(set(values)):
+        raise argparse.ArgumentTypeError("species names must not be repeated")
+    return values
+
+
+def species_scope_filename_token(species_scope: str) -> str:
+    token = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(species_scope)).strip("._-")
+    if not token:
+        raise ValueError(f"species scope has no filename-safe characters: {species_scope!r}")
+    return token
+
+
+def particle_plot_suffix(
+    *,
+    species_scope: str,
+    iteration: int,
+    preserve_legacy_name: bool,
+) -> str:
+    iteration_token = f"it{int(iteration):08d}"
+    if preserve_legacy_name:
+        return iteration_token
+    return f"{species_scope_filename_token(species_scope)}_{iteration_token}"
 
 
 def case_id_from_case_dir(case_dir: Path) -> str:
@@ -315,7 +350,15 @@ def main() -> None:
         required=True,
         help="Output directory, usually CASE/particle_analysis",
     )
-    parser.add_argument("--species", default="electrons")
+    parser.add_argument(
+        "--species",
+        type=parse_species_list,
+        default=parse_species_list("electrons"),
+        help=(
+            "Comma- or whitespace-separated electron species. With multiple "
+            "species the first summary row is their concatenated all_electrons scope."
+        ),
+    )
     parser.add_argument("--which", choices=["last", "all", "exit"], default="last")
     parser.add_argument("--stride", type=int, default=1)
     parser.add_argument("--hot-energy-mev", type=float, default=10.0)
@@ -401,6 +444,16 @@ def main() -> None:
             "for particle_acceptance_curves.csv."
         ),
     )
+    parser.add_argument("--soft50-energy-low-mev", type=float, default=10.0)
+    parser.add_argument("--soft50-energy-target-mev", type=float, default=50.0)
+    parser.add_argument("--soft50-reliability-floor", type=float, default=0.05)
+    parser.add_argument("--soft50-effective-count-reference", type=float, default=200.0)
+    parser.add_argument(
+        "--soft50-curve-energy-low-mev",
+        type=parse_float_list,
+        default=parse_float_list("5,10"),
+        help="Energy-low values persisted in particle_soft50_curves.csv.",
+    )
     args = parser.parse_args()
 
     diag = Path(args.diag)
@@ -410,12 +463,16 @@ def main() -> None:
 
     summary_csv = outdir / "particle_summary.csv"
     acceptance_csv = outdir / "particle_acceptance_curves.csv"
+    soft50_curve_csv = outdir / "particle_soft50_curves.csv"
 
     write_summary = (not args.plots_only) and (
         args.overwrite or not summary_csv.exists()
     )
     write_acceptance = (not args.plots_only) and (
         args.overwrite or not acceptance_csv.exists()
+    )
+    write_soft50_curve = (not args.plots_only) and (
+        args.overwrite or not soft50_curve_csv.exists()
     )
 
     if (
@@ -424,12 +481,20 @@ def main() -> None:
         and not args.overwrite
         and not write_summary
         and not write_acceptance
+        and not write_soft50_curve
     ):
-        print(f"[SKIP] existing {summary_csv} and {acceptance_csv}")
+        print(
+            f"[SKIP] existing {summary_csv}, {acceptance_csv}, "
+            f"and {soft50_curve_csv}"
+        )
         return
 
     if (not args.plots_only) and not args.skip_existing and not args.overwrite:
-        existing = [str(p) for p in (summary_csv, acceptance_csv) if p.exists()]
+        existing = [
+            str(path)
+            for path in (summary_csv, acceptance_csv, soft50_curve_csv)
+            if path.exists()
+        ]
         if existing:
             raise FileExistsError(
                 "Output already exists: "
@@ -457,6 +522,10 @@ def main() -> None:
     print(f"plots_only       = {args.plots_only}")
     print(f"accept_theta_mrad= {args.acceptance_theta_cuts_mrad}")
     print(f"accept_Emin_MeV  = {args.acceptance_energy_cuts_mev}")
+    print(f"soft50_E_low     = {args.soft50_energy_low_mev}")
+    print(f"soft50_E_target  = {args.soft50_energy_target_mev}")
+    print(f"soft50_N_ref     = {args.soft50_effective_count_reference}")
+    print(f"soft50_curve_low = {args.soft50_curve_energy_low_mev}")
     print("==============================")
 
     ts = open_series(diag)
@@ -482,92 +551,149 @@ def main() -> None:
 
     rows = []
     acceptance_rows = []
+    soft50_curve_rows = []
     plots_dir = outdir / "plots"
     case_id = case_id_from_case_dir(case_dir)
     case_name = case_dir.name
+    soft50_config = Soft50Config(
+        energy_low_mev=args.soft50_energy_low_mev,
+        energy_target_mev=args.soft50_energy_target_mev,
+        reliability_floor=args.soft50_reliability_floor,
+        effective_count_reference=args.soft50_effective_count_reference,
+    )
 
     for iteration in iterations:
         print(f"[READ] iteration {iteration}")
 
-        dump = read_particle_dump(
-            diag,
-            species=args.species,
-            iteration=iteration,
-        )
-
-        row = summarize_dump(
-            dump,
-            hot_energy_mev=args.hot_energy_mev,
-            longitudinal=args.longitudinal,
-            exit_window_mm=args.exit_window_mm,
-            forward_only=not args.no_forward_cut,
-        )
-
-        row = {
-            **selection_info,
-            **row,
-        }
-        rows.append(row)
-
-        acceptance_rows.extend(
-            summarize_acceptance_curves(
-                dump,
-                case_id=case_id,
-                case_name=case_name,
-                selection_mode=str(selection_info.get("selection_mode", "")),
-                selected_particle_iteration=int(
-                    selection_info.get("selected_particle_iteration", iteration)
-                ),
-                theta_cuts_mrad=args.acceptance_theta_cuts_mrad,
-                e_min_mev=args.acceptance_energy_cuts_mev,
-                longitudinal=args.longitudinal,
-                forward_only=not args.no_forward_cut,
+        species_dumps = [
+            (
+                species,
+                read_particle_dump(diag, species=species, iteration=iteration),
             )
+            for species in args.species
+        ]
+        combined_dump = concatenate_particle_dumps(
+            [dump for _, dump in species_dumps]
+        )
+        scopes = (
+            [("all_electrons", combined_dump), *species_dumps]
+            if len(species_dumps) > 1
+            else species_dumps
         )
 
-        suffix = f"it{int(iteration):08d}"
-
-        save_energy_spectrum(
-            dump,
-            path=plots_dir / f"energy_spectrum_{suffix}.png",
-            hot_energy_mev=args.hot_energy_mev,
-            bins=args.bins,
-            emax_mev=args.emax_mev,
-            spectrum_min_energy_mev=args.spectrum_emin_mev,
-            log_y=args.spectrum_log_y,
-        )
-
-        try:
-            save_longitudinal_phase_space(
-                dump,
-                path=plots_dir / f"longitudinal_phase_space_hot_{suffix}.png",
+        for species_scope, scoped_dump in scopes:
+            row = summarize_dump(
+                scoped_dump,
                 hot_energy_mev=args.hot_energy_mev,
                 longitudinal=args.longitudinal,
                 exit_window_mm=args.exit_window_mm,
                 forward_only=not args.no_forward_cut,
-                max_points=args.max_phase_points,
+                soft50_config=soft50_config,
+                species_scope=species_scope,
             )
-            save_longitudinal_energy_space(
-                dump,
-                path=plots_dir / f"longitudinal_energy_space_hot_{suffix}.png",
+            rows.append({**selection_info, **row})
+
+            acceptance_rows.extend(
+                summarize_acceptance_curves(
+                    scoped_dump,
+                    case_id=case_id,
+                    case_name=case_name,
+                    species_scope=species_scope,
+                    selection_mode=str(selection_info.get("selection_mode", "")),
+                    selected_particle_iteration=int(
+                        selection_info.get("selected_particle_iteration", iteration)
+                    ),
+                    theta_cuts_mrad=args.acceptance_theta_cuts_mrad,
+                    e_min_mev=args.acceptance_energy_cuts_mev,
+                    longitudinal=args.longitudinal,
+                    forward_only=not args.no_forward_cut,
+                )
+            )
+            soft50_curve_rows.extend(
+                summarize_soft50_curve(
+                    scoped_dump,
+                    energy_low_values_mev=args.soft50_curve_energy_low_mev,
+                    energy_target_mev=args.soft50_energy_target_mev,
+                    reliability_floor=args.soft50_reliability_floor,
+                    effective_count_reference=args.soft50_effective_count_reference,
+                    longitudinal=args.longitudinal,
+                    forward_only=not args.no_forward_cut,
+                    exit_window_mm=args.exit_window_mm,
+                    metadata={
+                        "case_id": case_id,
+                        "case_name": case_name,
+                        "species_scope": species_scope,
+                        "selection_mode": str(
+                            selection_info.get("selection_mode", "")
+                        ),
+                        "selected_particle_iteration": int(
+                            selection_info.get(
+                                "selected_particle_iteration", iteration
+                            )
+                        ),
+                    },
+                )
+            )
+
+        plot_scopes = (
+            [("all_electrons", combined_dump), *species_dumps]
+            if len(species_dumps) > 1
+            else species_dumps
+        )
+        for plot_index, (species_scope, scoped_dump) in enumerate(plot_scopes):
+            suffix = particle_plot_suffix(
+                species_scope=species_scope,
+                iteration=iteration,
+                preserve_legacy_name=plot_index == 0,
+            )
+            save_energy_spectrum(
+                scoped_dump,
+                path=plots_dir / f"energy_spectrum_{suffix}.png",
                 hot_energy_mev=args.hot_energy_mev,
-                longitudinal=args.longitudinal,
-                exit_window_mm=args.exit_window_mm,
-                forward_only=not args.no_forward_cut,
-                max_points=args.max_phase_points,
+                bins=args.bins,
+                emax_mev=args.emax_mev,
+                spectrum_min_energy_mev=args.spectrum_emin_mev,
+                log_y=args.spectrum_log_y,
+                species_scope=species_scope,
             )
-            save_transverse_phase_space_plots(
-                dump,
-                outdir=plots_dir,
-                suffix=suffix,
-                hot_energy_mev=args.hot_energy_mev,
-                longitudinal=args.longitudinal,
-                exit_window_mm=args.exit_window_mm,
-                forward_only=not args.no_forward_cut,
-                max_points=args.max_phase_points,
-            )
-        except ValueError as exc:
-            print(f"[WARN] skipping phase-space plot for iteration {iteration}: {exc}")
+
+            try:
+                save_longitudinal_phase_space(
+                    scoped_dump,
+                    path=plots_dir / f"longitudinal_phase_space_hot_{suffix}.png",
+                    hot_energy_mev=args.hot_energy_mev,
+                    longitudinal=args.longitudinal,
+                    exit_window_mm=args.exit_window_mm,
+                    forward_only=not args.no_forward_cut,
+                    max_points=args.max_phase_points,
+                    species_scope=species_scope,
+                )
+                save_longitudinal_energy_space(
+                    scoped_dump,
+                    path=plots_dir / f"longitudinal_energy_space_hot_{suffix}.png",
+                    hot_energy_mev=args.hot_energy_mev,
+                    longitudinal=args.longitudinal,
+                    exit_window_mm=args.exit_window_mm,
+                    forward_only=not args.no_forward_cut,
+                    max_points=args.max_phase_points,
+                    species_scope=species_scope,
+                )
+                save_transverse_phase_space_plots(
+                    scoped_dump,
+                    outdir=plots_dir,
+                    suffix=suffix,
+                    hot_energy_mev=args.hot_energy_mev,
+                    longitudinal=args.longitudinal,
+                    exit_window_mm=args.exit_window_mm,
+                    forward_only=not args.no_forward_cut,
+                    max_points=args.max_phase_points,
+                    species_scope=species_scope,
+                )
+            except ValueError as exc:
+                print(
+                    "[WARN] skipping phase-space plot for "
+                    f"scope={species_scope} iteration={iteration}: {exc}"
+                )
 
     if write_summary:
         write_summary_csv(rows, summary_csv)
@@ -584,6 +710,14 @@ def main() -> None:
         print(f"[PLOTS-ONLY] left unchanged {acceptance_csv}")
     else:
         print(f"[USE] existing {acceptance_csv}")
+
+    if write_soft50_curve:
+        write_soft50_curve_csv(soft50_curve_rows, soft50_curve_csv)
+        print(f"[OK] wrote {soft50_curve_csv}")
+    elif args.plots_only:
+        print(f"[PLOTS-ONLY] left unchanged {soft50_curve_csv}")
+    else:
+        print(f"[USE] existing {soft50_curve_csv}")
 
 
 if __name__ == "__main__":

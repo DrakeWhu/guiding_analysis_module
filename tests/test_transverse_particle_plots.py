@@ -6,7 +6,11 @@ from pathlib import Path
 
 import numpy as np
 
-from cap_guiding.particles import ParticleDump, save_transverse_phase_space_plots
+from cap_guiding.particles import (
+    ParticleDump,
+    _species_scope_title_suffix,
+    save_transverse_phase_space_plots,
+)
 
 
 class TransverseParticlePlotTests(unittest.TestCase):
@@ -31,12 +35,20 @@ class TransverseParticlePlotTests(unittest.TestCase):
                 hot_energy_mev=10.0,
                 longitudinal="z",
                 forward_only=True,
+                species_scope="nitrogen_ionized_electrons",
             )
 
             self.assertEqual(len(paths), 4)
             for path in paths:
                 self.assertTrue(path.exists())
                 self.assertGreater(path.stat().st_size, 0)
+
+    def test_plot_title_identifies_species_scope(self) -> None:
+        self.assertEqual(
+            _species_scope_title_suffix("nitrogen_ionized_electrons"),
+            "\nspecies scope: nitrogen_ionized_electrons",
+        )
+        self.assertEqual(_species_scope_title_suffix(None), "")
 
 
 if __name__ == "__main__":
