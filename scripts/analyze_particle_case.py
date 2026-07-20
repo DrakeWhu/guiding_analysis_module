@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import argparse
 from html import parser
+import json
+import math
 import shlex
 import sys
 import re
@@ -134,6 +136,61 @@ def case_id_from_case_dir(case_dir: Path) -> str:
     return case_dir.name.split("_", 1)[0]
 
 
+def target_propagation_from_resolved_parameters(
+    *,
+    case_dir: Path,
+    exit_kind: str,
+) -> float | None:
+    """Return the physical exit coordinate recorded by the simulation input.
+
+    Corrected CLPU cases persist the longitudinal boundaries in
+    ``resolved_parameters.json``.  Those values are authoritative: unlike a
+    bare plateau length, ``plateau_end_z`` includes the front ramp and really
+    denotes the plateau exit in the propagation coordinate used by the field
+    diagnostics.
+    """
+
+    path = case_dir / "resolved_parameters.json"
+    if not path.exists():
+        return None
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"Could not read resolved simulation parameters: {path}") from exc
+
+    if exit_kind == "plateau":
+        target_key = "plateau_end_z"
+    elif exit_kind == "capillary":
+        target_key = "plasma_end_z"
+    else:
+        raise ValueError(f"Unknown exit_kind: {exit_kind}")
+
+    required = ["plasma_start_z", target_key]
+    missing = [key for key in required if key not in payload]
+    if missing:
+        raise ValueError(
+            f"Resolved simulation parameters lack {missing} in {path}"
+        )
+
+    try:
+        start_m = float(payload["plasma_start_z"])
+        target_m = float(payload[target_key])
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"Resolved longitudinal boundaries are not numeric in {path}"
+        ) from exc
+
+    if not math.isfinite(start_m) or not math.isfinite(target_m):
+        raise ValueError(f"Resolved longitudinal boundaries are not finite in {path}")
+    if target_m <= start_m:
+        raise ValueError(
+            f"Resolved {target_key} must be downstream of plasma_start_z in {path}"
+        )
+
+    return (target_m - start_m) * 1.0e3
+
+
 def target_propagation_from_case(
     *,
     case_dir: Path,
@@ -143,6 +200,13 @@ def target_propagation_from_case(
 ) -> float:
     if target_propagation_mm is not None:
         return float(target_propagation_mm)
+
+    resolved_target_mm = target_propagation_from_resolved_parameters(
+        case_dir=case_dir,
+        exit_kind=exit_kind,
+    )
+    if resolved_target_mm is not None:
+        return resolved_target_mm
 
     env = parse_case_env(case_dir / "case.env")
 
@@ -270,6 +334,47 @@ def nearest_particle_iteration(
         "available_particle_iterations_max": int(arr.max()),
         "n_available_particle_iterations": int(arr.size),
     }
+
+
+def validate_exit_iteration_alignment(
+    selection_info: dict[str, Any],
+    *,
+    maximum_target_iteration_delta: int,
+) -> None:
+    """Reject a particle dump that is too far from the requested exit frame."""
+
+    maximum_delta = int(maximum_target_iteration_delta)
+    if maximum_delta < 0:
+        raise ValueError("maximum target iteration delta must be non-negative")
+    if selection_info.get("selection_mode") != "exit":
+        raise ValueError(
+            "target-iteration alignment can only be required for --which exit"
+        )
+
+    required = [
+        "target_guiding_iteration",
+        "selected_particle_iteration",
+        "target_iteration_delta",
+    ]
+    missing = [key for key in required if key not in selection_info]
+    if missing:
+        raise ValueError(f"exit selection metadata lacks {missing}")
+
+    target = int(selection_info["target_guiding_iteration"])
+    selected = int(selection_info["selected_particle_iteration"])
+    delta = int(selection_info["target_iteration_delta"])
+    if selected - target != delta:
+        raise ValueError(
+            "inconsistent exit selection metadata: "
+            f"selected={selected}, target={target}, delta={delta}"
+        )
+    if abs(delta) > maximum_delta:
+        raise RuntimeError(
+            "Particle diagnostic is not aligned with the requested exit frame: "
+            f"target guiding iteration={target}, selected particle iteration={selected}, "
+            f"delta={delta}, allowed={maximum_delta}. Refusing to analyze a distant "
+            "snapshot as an exit measurement."
+        )
 
 
 def resolve_iterations(
@@ -463,6 +568,17 @@ def main() -> None:
             "the authoritative exact exit iteration. Only valid with --which exit."
         ),
     )
+    parser.add_argument(
+        "--maximum-target-iteration-delta",
+        type=int,
+        default=None,
+        help=(
+            "For legacy --which exit selection, abort unless the selected particle "
+            "iteration is within this many steps of the guiding iteration nearest "
+            "the physical exit. Omit for legacy nearest-snapshot behavior. "
+            "Not valid with --resolved-parameters."
+        ),
+    )
     parser.add_argument("--bins", type=int, default=200)
     parser.add_argument("--emax-mev", type=float, default=None)
     parser.add_argument(
@@ -532,6 +648,15 @@ def main() -> None:
     )
     if resolved_parameters is not None and args.which != "exit":
         raise ValueError("--resolved-parameters is only valid with --which exit")
+    if (
+        resolved_parameters is not None
+        and args.maximum_target_iteration_delta is not None
+    ):
+        raise ValueError(
+            "--maximum-target-iteration-delta cannot be combined with "
+            "--resolved-parameters; exact exit selection already requires the "
+            "resolved target iteration"
+        )
 
     summary_csv = outdir / "particle_summary.csv"
     acceptance_csv = outdir / "particle_acceptance_curves.csv"
@@ -584,6 +709,7 @@ def main() -> None:
     print(f"target_prop_mm    = {args.target_propagation_mm}")
     print(f"resolved_params   = {resolved_parameters}")
     print(f"guiding_metrics   = {guiding_metrics or case_dir / 'guiding_metrics.csv'}")
+    print(f"max_target_delta  = {args.maximum_target_iteration_delta}")
     print(f"stride            = {args.stride}")
     print(f"hot_energy_mev    = {args.hot_energy_mev}")
     print(f"longitudinal      = {args.longitudinal}")
@@ -615,6 +741,19 @@ def main() -> None:
         downramp_mm=args.downramp_mm,
         resolved_parameters=resolved_parameters,
     )
+
+    if args.maximum_target_iteration_delta is not None:
+        validate_exit_iteration_alignment(
+            selection_info,
+            maximum_target_iteration_delta=args.maximum_target_iteration_delta,
+        )
+        selection_info = {
+            **selection_info,
+            "maximum_target_iteration_delta": int(
+                args.maximum_target_iteration_delta
+            ),
+            "target_iteration_alignment_status": "ok",
+        }
 
     if not iterations:
         raise RuntimeError(f"No particle iterations selected in {diag}")
