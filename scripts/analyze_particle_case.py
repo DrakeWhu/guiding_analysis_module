@@ -17,6 +17,10 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from cap_guiding.openpmd_io import open_series, get_iterations, describe_series
+from cap_guiding.particle_exit import (
+    read_resolved_particle_exit_target,
+    require_exact_particle_iteration,
+)
 from cap_guiding.particles import (
     concatenate_particle_dumps,
     last_iteration,
@@ -278,6 +282,7 @@ def resolve_iterations(
     exit_kind: str,
     target_propagation_mm: float | None,
     downramp_mm: float | None,
+    resolved_parameters: Path | None = None,
 ) -> tuple[list[int], dict[str, Any]]:
     if which == "last":
         iteration = last_iteration(diag)
@@ -293,6 +298,60 @@ def resolve_iterations(
             "selection_mode": "all",
             "analysis_stride": int(stride),
         }
+
+    if which == "exit" and resolved_parameters is not None:
+        if target_propagation_mm is not None:
+            raise ValueError(
+                "--target-propagation-mm cannot be combined with authoritative "
+                "--resolved-parameters exit selection"
+            )
+
+        target_info = read_resolved_particle_exit_target(
+            resolved_parameters,
+            exit_kind=exit_kind,
+        )
+        particle_info = require_exact_particle_iteration(
+            diag,
+            target_iteration=int(target_info["target_particle_iteration"]),
+        )
+
+        metrics_csv = (
+            guiding_metrics
+            if guiding_metrics is not None
+            else case_dir / "guiding_metrics.csv"
+        )
+        selection_info: dict[str, Any] = {
+            "selection_mode": "exit_exact_resolved",
+            "exit_kind": exit_kind,
+            **target_info,
+            **particle_info,
+        }
+
+        if metrics_csv.exists() and "target_propagation_mm" in target_info:
+            guiding_info = read_guiding_iteration_at_propagation(
+                metrics_csv,
+                target_propagation_mm=float(target_info["target_propagation_mm"]),
+            )
+            selection_info.update(
+                {
+                    "guiding_context_available": True,
+                    "guiding_metrics_csv": str(metrics_csv),
+                    **guiding_info,
+                    "particle_vs_guiding_iteration_delta": int(
+                        particle_info["selected_particle_iteration"]
+                        - guiding_info["target_guiding_iteration"]
+                    ),
+                }
+            )
+        else:
+            selection_info.update(
+                {
+                    "guiding_context_available": False,
+                    "guiding_metrics_csv": str(metrics_csv),
+                }
+            )
+
+        return [int(particle_info["selected_particle_iteration"])], selection_info
 
     if which == "exit":
         metrics_csv = (
@@ -389,12 +448,20 @@ def main() -> None:
         "--target-propagation-mm",
         type=float,
         default=None,
-        help="Override physical target propagation in mm for --which exit.",
+        help="Override physical target propagation in mm for legacy --which exit selection.",
     )
     parser.add_argument(
         "--guiding-metrics",
         default=None,
         help="Optional guiding_metrics.csv. Defaults to CASE_DIR/guiding_metrics.csv.",
+    )
+    parser.add_argument(
+        "--resolved-parameters",
+        default=None,
+        help=(
+            "Use particle_diagnostic_targets in this resolved_parameters.json as "
+            "the authoritative exact exit iteration. Only valid with --which exit."
+        ),
     )
     parser.add_argument("--bins", type=int, default=200)
     parser.add_argument("--emax-mev", type=float, default=None)
@@ -422,8 +489,8 @@ def main() -> None:
         type=float,
         default=None,
         help=(
-            "Downramp length in mm used when --which exit --exit-kind capillary "
-            "and no explicit total capillary length is available."
+            "Downramp length in mm used by legacy --which exit --exit-kind capillary "
+            "when no explicit total capillary length is available."
         ),
     )
     parser.add_argument(
@@ -460,6 +527,11 @@ def main() -> None:
     outdir = Path(args.outdir)
     case_dir = diag.parents[1] if diag.parent.name == "diags" else outdir.parent
     guiding_metrics = Path(args.guiding_metrics) if args.guiding_metrics else None
+    resolved_parameters = (
+        Path(args.resolved_parameters) if args.resolved_parameters else None
+    )
+    if resolved_parameters is not None and args.which != "exit":
+        raise ValueError("--resolved-parameters is only valid with --which exit")
 
     summary_csv = outdir / "particle_summary.csv"
     acceptance_csv = outdir / "particle_acceptance_curves.csv"
@@ -510,6 +582,7 @@ def main() -> None:
     print(f"which             = {args.which}")
     print(f"exit_kind         = {args.exit_kind}")
     print(f"target_prop_mm    = {args.target_propagation_mm}")
+    print(f"resolved_params   = {resolved_parameters}")
     print(f"guiding_metrics   = {guiding_metrics or case_dir / 'guiding_metrics.csv'}")
     print(f"stride            = {args.stride}")
     print(f"hot_energy_mev    = {args.hot_energy_mev}")
@@ -540,6 +613,7 @@ def main() -> None:
         exit_kind=args.exit_kind,
         target_propagation_mm=args.target_propagation_mm,
         downramp_mm=args.downramp_mm,
+        resolved_parameters=resolved_parameters,
     )
 
     if not iterations:
