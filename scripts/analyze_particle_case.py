@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import argparse
 from html import parser
+import json
+import math
 import shlex
 import sys
 import re
@@ -17,7 +19,12 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from cap_guiding.openpmd_io import open_series, get_iterations, describe_series
+from cap_guiding.particle_exit import (
+    read_resolved_particle_exit_target,
+    require_exact_particle_iteration,
+)
 from cap_guiding.particles import (
+    concatenate_particle_dumps,
     last_iteration,
     read_particle_dump,
     save_energy_spectrum,
@@ -28,6 +35,11 @@ from cap_guiding.particles import (
     write_summary_csv,
     summarize_acceptance_curves,
     write_acceptance_curves_csv,
+)
+from cap_guiding.soft50 import (
+    Soft50Config,
+    summarize_soft50_curve,
+    write_soft50_curve_csv,
 )
 
 
@@ -91,8 +103,92 @@ def parse_float_list(text: str) -> list[float]:
     return values
 
 
+def parse_species_list(text: str) -> list[str]:
+    values = [value.strip() for value in str(text).replace(",", " ").split()]
+    values = [value for value in values if value]
+    if not values:
+        raise argparse.ArgumentTypeError("expected at least one species name")
+    if len(values) != len(set(values)):
+        raise argparse.ArgumentTypeError("species names must not be repeated")
+    return values
+
+
+def species_scope_filename_token(species_scope: str) -> str:
+    token = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(species_scope)).strip("._-")
+    if not token:
+        raise ValueError(f"species scope has no filename-safe characters: {species_scope!r}")
+    return token
+
+
+def particle_plot_suffix(
+    *,
+    species_scope: str,
+    iteration: int,
+    preserve_legacy_name: bool,
+) -> str:
+    iteration_token = f"it{int(iteration):08d}"
+    if preserve_legacy_name:
+        return iteration_token
+    return f"{species_scope_filename_token(species_scope)}_{iteration_token}"
+
+
 def case_id_from_case_dir(case_dir: Path) -> str:
     return case_dir.name.split("_", 1)[0]
+
+
+def target_propagation_from_resolved_parameters(
+    *,
+    case_dir: Path,
+    exit_kind: str,
+) -> float | None:
+    """Return the physical exit coordinate recorded by the simulation input.
+
+    Corrected CLPU cases persist the longitudinal boundaries in
+    ``resolved_parameters.json``.  Those values are authoritative: unlike a
+    bare plateau length, ``plateau_end_z`` includes the front ramp and really
+    denotes the plateau exit in the propagation coordinate used by the field
+    diagnostics.
+    """
+
+    path = case_dir / "resolved_parameters.json"
+    if not path.exists():
+        return None
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"Could not read resolved simulation parameters: {path}") from exc
+
+    if exit_kind == "plateau":
+        target_key = "plateau_end_z"
+    elif exit_kind == "capillary":
+        target_key = "plasma_end_z"
+    else:
+        raise ValueError(f"Unknown exit_kind: {exit_kind}")
+
+    required = ["plasma_start_z", target_key]
+    missing = [key for key in required if key not in payload]
+    if missing:
+        raise ValueError(
+            f"Resolved simulation parameters lack {missing} in {path}"
+        )
+
+    try:
+        start_m = float(payload["plasma_start_z"])
+        target_m = float(payload[target_key])
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"Resolved longitudinal boundaries are not numeric in {path}"
+        ) from exc
+
+    if not math.isfinite(start_m) or not math.isfinite(target_m):
+        raise ValueError(f"Resolved longitudinal boundaries are not finite in {path}")
+    if target_m <= start_m:
+        raise ValueError(
+            f"Resolved {target_key} must be downstream of plasma_start_z in {path}"
+        )
+
+    return (target_m - start_m) * 1.0e3
 
 
 def target_propagation_from_case(
@@ -104,6 +200,13 @@ def target_propagation_from_case(
 ) -> float:
     if target_propagation_mm is not None:
         return float(target_propagation_mm)
+
+    resolved_target_mm = target_propagation_from_resolved_parameters(
+        case_dir=case_dir,
+        exit_kind=exit_kind,
+    )
+    if resolved_target_mm is not None:
+        return resolved_target_mm
 
     env = parse_case_env(case_dir / "case.env")
 
@@ -233,6 +336,47 @@ def nearest_particle_iteration(
     }
 
 
+def validate_exit_iteration_alignment(
+    selection_info: dict[str, Any],
+    *,
+    maximum_target_iteration_delta: int,
+) -> None:
+    """Reject a particle dump that is too far from the requested exit frame."""
+
+    maximum_delta = int(maximum_target_iteration_delta)
+    if maximum_delta < 0:
+        raise ValueError("maximum target iteration delta must be non-negative")
+    if selection_info.get("selection_mode") != "exit":
+        raise ValueError(
+            "target-iteration alignment can only be required for --which exit"
+        )
+
+    required = [
+        "target_guiding_iteration",
+        "selected_particle_iteration",
+        "target_iteration_delta",
+    ]
+    missing = [key for key in required if key not in selection_info]
+    if missing:
+        raise ValueError(f"exit selection metadata lacks {missing}")
+
+    target = int(selection_info["target_guiding_iteration"])
+    selected = int(selection_info["selected_particle_iteration"])
+    delta = int(selection_info["target_iteration_delta"])
+    if selected - target != delta:
+        raise ValueError(
+            "inconsistent exit selection metadata: "
+            f"selected={selected}, target={target}, delta={delta}"
+        )
+    if abs(delta) > maximum_delta:
+        raise RuntimeError(
+            "Particle diagnostic is not aligned with the requested exit frame: "
+            f"target guiding iteration={target}, selected particle iteration={selected}, "
+            f"delta={delta}, allowed={maximum_delta}. Refusing to analyze a distant "
+            "snapshot as an exit measurement."
+        )
+
+
 def resolve_iterations(
     *,
     diag: Path,
@@ -243,6 +387,7 @@ def resolve_iterations(
     exit_kind: str,
     target_propagation_mm: float | None,
     downramp_mm: float | None,
+    resolved_parameters: Path | None = None,
 ) -> tuple[list[int], dict[str, Any]]:
     if which == "last":
         iteration = last_iteration(diag)
@@ -258,6 +403,60 @@ def resolve_iterations(
             "selection_mode": "all",
             "analysis_stride": int(stride),
         }
+
+    if which == "exit" and resolved_parameters is not None:
+        if target_propagation_mm is not None:
+            raise ValueError(
+                "--target-propagation-mm cannot be combined with authoritative "
+                "--resolved-parameters exit selection"
+            )
+
+        target_info = read_resolved_particle_exit_target(
+            resolved_parameters,
+            exit_kind=exit_kind,
+        )
+        particle_info = require_exact_particle_iteration(
+            diag,
+            target_iteration=int(target_info["target_particle_iteration"]),
+        )
+
+        metrics_csv = (
+            guiding_metrics
+            if guiding_metrics is not None
+            else case_dir / "guiding_metrics.csv"
+        )
+        selection_info: dict[str, Any] = {
+            "selection_mode": "exit_exact_resolved",
+            "exit_kind": exit_kind,
+            **target_info,
+            **particle_info,
+        }
+
+        if metrics_csv.exists() and "target_propagation_mm" in target_info:
+            guiding_info = read_guiding_iteration_at_propagation(
+                metrics_csv,
+                target_propagation_mm=float(target_info["target_propagation_mm"]),
+            )
+            selection_info.update(
+                {
+                    "guiding_context_available": True,
+                    "guiding_metrics_csv": str(metrics_csv),
+                    **guiding_info,
+                    "particle_vs_guiding_iteration_delta": int(
+                        particle_info["selected_particle_iteration"]
+                        - guiding_info["target_guiding_iteration"]
+                    ),
+                }
+            )
+        else:
+            selection_info.update(
+                {
+                    "guiding_context_available": False,
+                    "guiding_metrics_csv": str(metrics_csv),
+                }
+            )
+
+        return [int(particle_info["selected_particle_iteration"])], selection_info
 
     if which == "exit":
         metrics_csv = (
@@ -315,7 +514,15 @@ def main() -> None:
         required=True,
         help="Output directory, usually CASE/particle_analysis",
     )
-    parser.add_argument("--species", default="electrons")
+    parser.add_argument(
+        "--species",
+        type=parse_species_list,
+        default=parse_species_list("electrons"),
+        help=(
+            "Comma- or whitespace-separated electron species. With multiple "
+            "species the first summary row is their concatenated all_electrons scope."
+        ),
+    )
     parser.add_argument("--which", choices=["last", "all", "exit"], default="last")
     parser.add_argument("--stride", type=int, default=1)
     parser.add_argument("--hot-energy-mev", type=float, default=10.0)
@@ -346,12 +553,31 @@ def main() -> None:
         "--target-propagation-mm",
         type=float,
         default=None,
-        help="Override physical target propagation in mm for --which exit.",
+        help="Override physical target propagation in mm for legacy --which exit selection.",
     )
     parser.add_argument(
         "--guiding-metrics",
         default=None,
         help="Optional guiding_metrics.csv. Defaults to CASE_DIR/guiding_metrics.csv.",
+    )
+    parser.add_argument(
+        "--resolved-parameters",
+        default=None,
+        help=(
+            "Use particle_diagnostic_targets in this resolved_parameters.json as "
+            "the authoritative exact exit iteration. Only valid with --which exit."
+        ),
+    )
+    parser.add_argument(
+        "--maximum-target-iteration-delta",
+        type=int,
+        default=None,
+        help=(
+            "For legacy --which exit selection, abort unless the selected particle "
+            "iteration is within this many steps of the guiding iteration nearest "
+            "the physical exit. Omit for legacy nearest-snapshot behavior. "
+            "Not valid with --resolved-parameters."
+        ),
     )
     parser.add_argument("--bins", type=int, default=200)
     parser.add_argument("--emax-mev", type=float, default=None)
@@ -379,8 +605,8 @@ def main() -> None:
         type=float,
         default=None,
         help=(
-            "Downramp length in mm used when --which exit --exit-kind capillary "
-            "and no explicit total capillary length is available."
+            "Downramp length in mm used by legacy --which exit --exit-kind capillary "
+            "when no explicit total capillary length is available."
         ),
     )
     parser.add_argument(
@@ -401,21 +627,49 @@ def main() -> None:
             "for particle_acceptance_curves.csv."
         ),
     )
+    parser.add_argument("--soft50-energy-low-mev", type=float, default=10.0)
+    parser.add_argument("--soft50-energy-target-mev", type=float, default=50.0)
+    parser.add_argument("--soft50-reliability-floor", type=float, default=0.05)
+    parser.add_argument("--soft50-effective-count-reference", type=float, default=200.0)
+    parser.add_argument(
+        "--soft50-curve-energy-low-mev",
+        type=parse_float_list,
+        default=parse_float_list("5,10"),
+        help="Energy-low values persisted in particle_soft50_curves.csv.",
+    )
     args = parser.parse_args()
 
     diag = Path(args.diag)
     outdir = Path(args.outdir)
     case_dir = diag.parents[1] if diag.parent.name == "diags" else outdir.parent
     guiding_metrics = Path(args.guiding_metrics) if args.guiding_metrics else None
+    resolved_parameters = (
+        Path(args.resolved_parameters) if args.resolved_parameters else None
+    )
+    if resolved_parameters is not None and args.which != "exit":
+        raise ValueError("--resolved-parameters is only valid with --which exit")
+    if (
+        resolved_parameters is not None
+        and args.maximum_target_iteration_delta is not None
+    ):
+        raise ValueError(
+            "--maximum-target-iteration-delta cannot be combined with "
+            "--resolved-parameters; exact exit selection already requires the "
+            "resolved target iteration"
+        )
 
     summary_csv = outdir / "particle_summary.csv"
     acceptance_csv = outdir / "particle_acceptance_curves.csv"
+    soft50_curve_csv = outdir / "particle_soft50_curves.csv"
 
     write_summary = (not args.plots_only) and (
         args.overwrite or not summary_csv.exists()
     )
     write_acceptance = (not args.plots_only) and (
         args.overwrite or not acceptance_csv.exists()
+    )
+    write_soft50_curve = (not args.plots_only) and (
+        args.overwrite or not soft50_curve_csv.exists()
     )
 
     if (
@@ -424,12 +678,20 @@ def main() -> None:
         and not args.overwrite
         and not write_summary
         and not write_acceptance
+        and not write_soft50_curve
     ):
-        print(f"[SKIP] existing {summary_csv} and {acceptance_csv}")
+        print(
+            f"[SKIP] existing {summary_csv}, {acceptance_csv}, "
+            f"and {soft50_curve_csv}"
+        )
         return
 
     if (not args.plots_only) and not args.skip_existing and not args.overwrite:
-        existing = [str(p) for p in (summary_csv, acceptance_csv) if p.exists()]
+        existing = [
+            str(path)
+            for path in (summary_csv, acceptance_csv, soft50_curve_csv)
+            if path.exists()
+        ]
         if existing:
             raise FileExistsError(
                 "Output already exists: "
@@ -445,7 +707,9 @@ def main() -> None:
     print(f"which             = {args.which}")
     print(f"exit_kind         = {args.exit_kind}")
     print(f"target_prop_mm    = {args.target_propagation_mm}")
+    print(f"resolved_params   = {resolved_parameters}")
     print(f"guiding_metrics   = {guiding_metrics or case_dir / 'guiding_metrics.csv'}")
+    print(f"max_target_delta  = {args.maximum_target_iteration_delta}")
     print(f"stride            = {args.stride}")
     print(f"hot_energy_mev    = {args.hot_energy_mev}")
     print(f"longitudinal      = {args.longitudinal}")
@@ -457,6 +721,10 @@ def main() -> None:
     print(f"plots_only       = {args.plots_only}")
     print(f"accept_theta_mrad= {args.acceptance_theta_cuts_mrad}")
     print(f"accept_Emin_MeV  = {args.acceptance_energy_cuts_mev}")
+    print(f"soft50_E_low     = {args.soft50_energy_low_mev}")
+    print(f"soft50_E_target  = {args.soft50_energy_target_mev}")
+    print(f"soft50_N_ref     = {args.soft50_effective_count_reference}")
+    print(f"soft50_curve_low = {args.soft50_curve_energy_low_mev}")
     print("==============================")
 
     ts = open_series(diag)
@@ -471,7 +739,21 @@ def main() -> None:
         exit_kind=args.exit_kind,
         target_propagation_mm=args.target_propagation_mm,
         downramp_mm=args.downramp_mm,
+        resolved_parameters=resolved_parameters,
     )
+
+    if args.maximum_target_iteration_delta is not None:
+        validate_exit_iteration_alignment(
+            selection_info,
+            maximum_target_iteration_delta=args.maximum_target_iteration_delta,
+        )
+        selection_info = {
+            **selection_info,
+            "maximum_target_iteration_delta": int(
+                args.maximum_target_iteration_delta
+            ),
+            "target_iteration_alignment_status": "ok",
+        }
 
     if not iterations:
         raise RuntimeError(f"No particle iterations selected in {diag}")
@@ -482,92 +764,149 @@ def main() -> None:
 
     rows = []
     acceptance_rows = []
+    soft50_curve_rows = []
     plots_dir = outdir / "plots"
     case_id = case_id_from_case_dir(case_dir)
     case_name = case_dir.name
+    soft50_config = Soft50Config(
+        energy_low_mev=args.soft50_energy_low_mev,
+        energy_target_mev=args.soft50_energy_target_mev,
+        reliability_floor=args.soft50_reliability_floor,
+        effective_count_reference=args.soft50_effective_count_reference,
+    )
 
     for iteration in iterations:
         print(f"[READ] iteration {iteration}")
 
-        dump = read_particle_dump(
-            diag,
-            species=args.species,
-            iteration=iteration,
-        )
-
-        row = summarize_dump(
-            dump,
-            hot_energy_mev=args.hot_energy_mev,
-            longitudinal=args.longitudinal,
-            exit_window_mm=args.exit_window_mm,
-            forward_only=not args.no_forward_cut,
-        )
-
-        row = {
-            **selection_info,
-            **row,
-        }
-        rows.append(row)
-
-        acceptance_rows.extend(
-            summarize_acceptance_curves(
-                dump,
-                case_id=case_id,
-                case_name=case_name,
-                selection_mode=str(selection_info.get("selection_mode", "")),
-                selected_particle_iteration=int(
-                    selection_info.get("selected_particle_iteration", iteration)
-                ),
-                theta_cuts_mrad=args.acceptance_theta_cuts_mrad,
-                e_min_mev=args.acceptance_energy_cuts_mev,
-                longitudinal=args.longitudinal,
-                forward_only=not args.no_forward_cut,
+        species_dumps = [
+            (
+                species,
+                read_particle_dump(diag, species=species, iteration=iteration),
             )
+            for species in args.species
+        ]
+        combined_dump = concatenate_particle_dumps(
+            [dump for _, dump in species_dumps]
+        )
+        scopes = (
+            [("all_electrons", combined_dump), *species_dumps]
+            if len(species_dumps) > 1
+            else species_dumps
         )
 
-        suffix = f"it{int(iteration):08d}"
-
-        save_energy_spectrum(
-            dump,
-            path=plots_dir / f"energy_spectrum_{suffix}.png",
-            hot_energy_mev=args.hot_energy_mev,
-            bins=args.bins,
-            emax_mev=args.emax_mev,
-            spectrum_min_energy_mev=args.spectrum_emin_mev,
-            log_y=args.spectrum_log_y,
-        )
-
-        try:
-            save_longitudinal_phase_space(
-                dump,
-                path=plots_dir / f"longitudinal_phase_space_hot_{suffix}.png",
+        for species_scope, scoped_dump in scopes:
+            row = summarize_dump(
+                scoped_dump,
                 hot_energy_mev=args.hot_energy_mev,
                 longitudinal=args.longitudinal,
                 exit_window_mm=args.exit_window_mm,
                 forward_only=not args.no_forward_cut,
-                max_points=args.max_phase_points,
+                soft50_config=soft50_config,
+                species_scope=species_scope,
             )
-            save_longitudinal_energy_space(
-                dump,
-                path=plots_dir / f"longitudinal_energy_space_hot_{suffix}.png",
+            rows.append({**selection_info, **row})
+
+            acceptance_rows.extend(
+                summarize_acceptance_curves(
+                    scoped_dump,
+                    case_id=case_id,
+                    case_name=case_name,
+                    species_scope=species_scope,
+                    selection_mode=str(selection_info.get("selection_mode", "")),
+                    selected_particle_iteration=int(
+                        selection_info.get("selected_particle_iteration", iteration)
+                    ),
+                    theta_cuts_mrad=args.acceptance_theta_cuts_mrad,
+                    e_min_mev=args.acceptance_energy_cuts_mev,
+                    longitudinal=args.longitudinal,
+                    forward_only=not args.no_forward_cut,
+                )
+            )
+            soft50_curve_rows.extend(
+                summarize_soft50_curve(
+                    scoped_dump,
+                    energy_low_values_mev=args.soft50_curve_energy_low_mev,
+                    energy_target_mev=args.soft50_energy_target_mev,
+                    reliability_floor=args.soft50_reliability_floor,
+                    effective_count_reference=args.soft50_effective_count_reference,
+                    longitudinal=args.longitudinal,
+                    forward_only=not args.no_forward_cut,
+                    exit_window_mm=args.exit_window_mm,
+                    metadata={
+                        "case_id": case_id,
+                        "case_name": case_name,
+                        "species_scope": species_scope,
+                        "selection_mode": str(
+                            selection_info.get("selection_mode", "")
+                        ),
+                        "selected_particle_iteration": int(
+                            selection_info.get(
+                                "selected_particle_iteration", iteration
+                            )
+                        ),
+                    },
+                )
+            )
+
+        plot_scopes = (
+            [("all_electrons", combined_dump), *species_dumps]
+            if len(species_dumps) > 1
+            else species_dumps
+        )
+        for plot_index, (species_scope, scoped_dump) in enumerate(plot_scopes):
+            suffix = particle_plot_suffix(
+                species_scope=species_scope,
+                iteration=iteration,
+                preserve_legacy_name=plot_index == 0,
+            )
+            save_energy_spectrum(
+                scoped_dump,
+                path=plots_dir / f"energy_spectrum_{suffix}.png",
                 hot_energy_mev=args.hot_energy_mev,
-                longitudinal=args.longitudinal,
-                exit_window_mm=args.exit_window_mm,
-                forward_only=not args.no_forward_cut,
-                max_points=args.max_phase_points,
+                bins=args.bins,
+                emax_mev=args.emax_mev,
+                spectrum_min_energy_mev=args.spectrum_emin_mev,
+                log_y=args.spectrum_log_y,
+                species_scope=species_scope,
             )
-            save_transverse_phase_space_plots(
-                dump,
-                outdir=plots_dir,
-                suffix=suffix,
-                hot_energy_mev=args.hot_energy_mev,
-                longitudinal=args.longitudinal,
-                exit_window_mm=args.exit_window_mm,
-                forward_only=not args.no_forward_cut,
-                max_points=args.max_phase_points,
-            )
-        except ValueError as exc:
-            print(f"[WARN] skipping phase-space plot for iteration {iteration}: {exc}")
+
+            try:
+                save_longitudinal_phase_space(
+                    scoped_dump,
+                    path=plots_dir / f"longitudinal_phase_space_hot_{suffix}.png",
+                    hot_energy_mev=args.hot_energy_mev,
+                    longitudinal=args.longitudinal,
+                    exit_window_mm=args.exit_window_mm,
+                    forward_only=not args.no_forward_cut,
+                    max_points=args.max_phase_points,
+                    species_scope=species_scope,
+                )
+                save_longitudinal_energy_space(
+                    scoped_dump,
+                    path=plots_dir / f"longitudinal_energy_space_hot_{suffix}.png",
+                    hot_energy_mev=args.hot_energy_mev,
+                    longitudinal=args.longitudinal,
+                    exit_window_mm=args.exit_window_mm,
+                    forward_only=not args.no_forward_cut,
+                    max_points=args.max_phase_points,
+                    species_scope=species_scope,
+                )
+                save_transverse_phase_space_plots(
+                    scoped_dump,
+                    outdir=plots_dir,
+                    suffix=suffix,
+                    hot_energy_mev=args.hot_energy_mev,
+                    longitudinal=args.longitudinal,
+                    exit_window_mm=args.exit_window_mm,
+                    forward_only=not args.no_forward_cut,
+                    max_points=args.max_phase_points,
+                    species_scope=species_scope,
+                )
+            except ValueError as exc:
+                print(
+                    "[WARN] skipping phase-space plot for "
+                    f"scope={species_scope} iteration={iteration}: {exc}"
+                )
 
     if write_summary:
         write_summary_csv(rows, summary_csv)
@@ -584,6 +923,14 @@ def main() -> None:
         print(f"[PLOTS-ONLY] left unchanged {acceptance_csv}")
     else:
         print(f"[USE] existing {acceptance_csv}")
+
+    if write_soft50_curve:
+        write_soft50_curve_csv(soft50_curve_rows, soft50_curve_csv)
+        print(f"[OK] wrote {soft50_curve_csv}")
+    elif args.plots_only:
+        print(f"[PLOTS-ONLY] left unchanged {soft50_curve_csv}")
+    else:
+        print(f"[USE] existing {soft50_curve_csv}")
 
 
 if __name__ == "__main__":
