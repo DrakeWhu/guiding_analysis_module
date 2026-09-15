@@ -1,6 +1,8 @@
 #pragma once
 
 #include <optional>
+#include <span>
+#include <string>
 #include <string_view>
 #include <utility>
 
@@ -20,5 +22,10 @@ inline constexpr double kDefaultRampUpMm = 5.0;
 
 [[nodiscard]] std::optional<std::pair<double, double>> infer_plateau_window_mm_from_text(
     std::string_view text, double ramp_up_mm = kDefaultRampUpMm);
+
+// One plateau window for the sources of a triplet: nullopt when no source has an
+// L<x>mm token; throws when the inferred windows disagree.
+[[nodiscard]] std::optional<std::pair<double, double>> infer_plateau_window_mm_from_sources(
+    std::span<const std::string> sources, double ramp_up_mm = kDefaultRampUpMm);
 
 }  // namespace guiding::campaign

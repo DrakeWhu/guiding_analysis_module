@@ -84,4 +84,63 @@ std::string py_float_repr(double value) {
   return out;
 }
 
+std::string py_str_repr(std::string_view text) {
+  const bool use_double = text.find('\'') != std::string_view::npos && text.find('"') == std::string_view::npos;
+  const char quote = use_double ? '"' : '\'';
+  std::string out(1, quote);
+  for (char c : text) {
+    if (c == '\\' || c == quote) {
+      out.push_back('\\');
+      out.push_back(c);
+    } else if (c == '\n') {
+      out += "\\n";
+    } else if (c == '\t') {
+      out += "\\t";
+    } else if (c == '\r') {
+      out += "\\r";
+    } else {
+      out.push_back(c);
+    }
+  }
+  out.push_back(quote);
+  return out;
+}
+
+std::string python_list_repr(std::span<const std::string> items) {
+  std::string out = "[";
+  for (std::size_t i = 0; i < items.size(); ++i) {
+    if (i > 0) {
+      out += ", ";
+    }
+    out += py_str_repr(items[i]);
+  }
+  return out + "]";
+}
+
+std::string python_path_string(const std::filesystem::path& path) {
+  const std::string text = path.generic_string();
+  if (text.empty()) {
+    return ".";
+  }
+  std::string out = text.front() == '/' ? "/" : "";
+  bool first = true;
+  std::size_t start = 0;
+  while (start <= text.size()) {
+    const std::size_t end = text.find('/', start);
+    const std::string_view part(text.data() + start, (end == std::string::npos ? text.size() : end) - start);
+    if (!part.empty() && part != ".") {
+      if (!first) {
+        out.push_back('/');
+      }
+      out.append(part);
+      first = false;
+    }
+    if (end == std::string::npos) {
+      break;
+    }
+    start = end + 1;
+  }
+  return out.empty() ? "." : out;
+}
+
 }  // namespace guiding::table

@@ -1,19 +1,40 @@
 #!/usr/bin/env python3
 """Run the Python reference pipeline on the synthetic fixtures.
 
-Outputs land in cpp/tests/data/golden/ together with metadata.json, which
-records the reference commit and library versions the goldens came from.
+Outputs land in cpp/tests/data/golden/:
+- cases/<case>/: scripts/analyze_case.py (guiding_metrics.csv + single-case score)
+- campaign/: scripts/analyze_campaign.py --run-cases --run-triplets (reports,
+  case metrics and triplet tables) plus its stdout
+metadata.json records the reference commit and library versions.
 """
 from __future__ import annotations
 
 import json
+import os
 import platform
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 DATA = REPO / "cpp" / "tests" / "data"
+
+
+def rel(path: Path) -> str:
+    return str(path.relative_to(REPO))
+
+
+def run_reference(*args: str) -> str:
+    result = subprocess.run(
+        [sys.executable, *args],
+        cwd=REPO,
+        check=True,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "MPLBACKEND": "Agg"},
+    )
+    return result.stdout
 
 
 def git(*args: str) -> str:
@@ -43,21 +64,28 @@ def main() -> None:
         raise SystemExit(f"no fixtures under {campaign}; run tools/golden/make_synthetic_openpmd.py first")
 
     for case in cases:
-        outdir = golden / "cases" / case.name
-        subprocess.run(
-            [
-                sys.executable,
-                "scripts/analyze_case.py",
-                "--diag",
-                str((case / "diags" / "diag1").relative_to(REPO)),
-                "--outdir",
-                str(outdir.relative_to(REPO)),
-                "--overwrite",
-                "--no-plots",
-            ],
-            cwd=REPO,
-            check=True,
+        run_reference(
+            "scripts/analyze_case.py",
+            "--diag", rel(case / "diags" / "diag1"),
+            "--outdir", rel(golden / "cases" / case.name),
+            "--overwrite",
+            "--no-plots",
         )
+
+    campaign_out = golden / "campaign"
+    shutil.rmtree(campaign_out, ignore_errors=True)
+    stdout = run_reference(
+        "scripts/analyze_campaign.py",
+        "--campaign-root", rel(campaign),
+        "--outdir", rel(campaign_out),
+        "--case-metrics-root", rel(campaign_out / "case_metrics"),
+        "--run-cases",
+        "--run-triplets",
+        "--min-h5", "2",
+        "--no-case-plots",
+        "--no-triplet-plots",
+    )
+    (campaign_out / "stdout.txt").write_text(stdout)
 
     metadata = {
         "generator": "tools/golden/generate_golden.py",
@@ -67,7 +95,7 @@ def main() -> None:
         "cases": [case.name for case in cases],
     }
     (golden / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
-    print(f"golden outputs for {len(cases)} cases in {golden}")
+    print(f"golden outputs for {len(cases)} cases and the campaign workflow in {golden}")
 
 
 if __name__ == "__main__":

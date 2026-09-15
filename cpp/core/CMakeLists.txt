@@ -1,5 +1,6 @@
 add_library(guiding_core STATIC
   src/campaign/case_metadata.cpp
+  src/campaign/discovery.cpp
   src/exec/parallel.cpp
   src/io/h5.cpp
   src/io/openpmd_series.cpp
@@ -8,6 +9,7 @@ add_library(guiding_core STATIC
   src/physics/field_metrics.cpp
   src/products/case_reduction.cpp
   src/products/singlecase_score.cpp
+  src/products/triplet_tables.cpp
   src/table/csv.cpp
   src/table/py_format.cpp)
 add_library(guiding::core ALIAS guiding_core)

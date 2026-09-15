@@ -193,3 +193,29 @@ TEST_CASE("plateau token parsing matches cap_guiding.case_metadata", "[metadata]
   }
   CHECK(checked > 10);
 }
+
+TEST_CASE("CSV numbers are parsed exactly like pandas.read_csv + to_numeric", "[pandas]") {
+  std::size_t checked = 0;
+  std::size_t not_correctly_rounded = 0;
+  for (const auto& line : reference_lines()) {
+    if (line.kind != "pandasfloat") {
+      continue;
+    }
+    INFO("input '" << line.input << "' expected " << line.expected);
+    const double expected = numbers(line.expected).at(0);
+    const double actual = guiding::table::parse_pandas_number(line.input);
+    if (std::isnan(expected)) {
+      CHECK(std::isnan(actual));
+    } else {
+      CHECK(same_bits(actual, expected));
+      const auto exact = guiding::table::parse_number(line.input);
+      if (exact && !same_bits(*exact, expected)) {
+        ++not_correctly_rounded;
+      }
+    }
+    ++checked;
+  }
+  CHECK(checked > 3000);
+  // The reference set is meant to exercise pandas' non-correctly-rounded paths.
+  CHECK(not_correctly_rounded > 0);
+}

@@ -1,6 +1,6 @@
 {
   "generator": "tools/golden/generate_golden.py",
-  "reference_commit": "4008d920dba0d26c44da9bacc4ba204a6a0be757",
+  "reference_commit": "7a4a4d66391789ab75b1d5cdd0144d4f84ef6d07",
   "reference_sources_modified": false,
   "versions": {
     "python": "3.11.2",

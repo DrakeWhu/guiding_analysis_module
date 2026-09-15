@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-"""Reference values for the numpy-compatible C++ kernels.
+"""Reference values for the numpy/pandas-compatible C++ kernels.
 
 Writes cpp/tests/data/numpy_reference.tsv with one check per line:
 kind<TAB>input<TAB>expected, floats as Python repr (round-trip exact).
 """
 from __future__ import annotations
 
+import io
 import sys
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
@@ -39,9 +41,49 @@ PLATEAU_TEXTS = (
     "run_L05mm/",
 )
 
+PANDAS_TEXTS = (
+    "0.9479768899922173",
+    "9.884458606166733",
+    "0.12345678901234567890123",
+    "123456789012345678901234567890",
+    "000123.4500",
+    "1E5",
+    "1e-320",
+    "4.9e-324",
+    "2.2250738585072014e-308",
+    "1.7976931348623157e308",
+    "-0.0",
+    "+12.5",
+    " 7.25 ",
+    "5e",
+    "1e+",
+    ".5",
+    "5.",
+    "inf",
+    "-inf",
+    "Infinity",
+    "-Infinity",
+    "nan",
+    "NaN",
+    "None",
+    "",
+    "abc",
+    "1e400",
+    "0.1e-400",
+)
+
 
 def fmt(values) -> str:
     return " ".join(repr(float(v)) for v in values)
+
+
+def pandas_cases(rng: np.random.Generator) -> list[str]:
+    texts = [repr(float(v)) for v in rng.standard_normal(2500) * 10.0 ** rng.uniform(-30.0, 30.0, 2500)]
+    texts += [repr(float(v)) for v in rng.random(500) * 20.0]
+    texts += list(PANDAS_TEXTS)
+    frame = pd.read_csv(io.StringIO("i,x\n" + "".join(f"{i},{t}\n" for i, t in enumerate(texts))))
+    values = pd.to_numeric(frame["x"], errors="coerce").to_numpy(float)
+    return [f"pandasfloat\t{text}\t{float(value)!r}" for text, value in zip(texts, values)]
 
 
 def main() -> None:
@@ -75,6 +117,8 @@ def main() -> None:
         lines.append(f"repr\t{float(value).hex()}\t{float(value)!r}")
     for text, value in (("nan", float("nan")), ("inf", float("inf")), ("-inf", float("-inf"))):
         lines.append(f"repr\t{text}\t{value!r}")
+
+    lines += pandas_cases(rng)
 
     for text in PLATEAU_TEXTS:
         try:

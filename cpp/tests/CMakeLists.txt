@@ -1,6 +1,8 @@
 add_executable(guiding_tests
+  parity/test_campaign_parity.cpp
   parity/test_field_parity.cpp
   support/table_compare.cpp
+  unit/test_campaign.cpp
   unit/test_csv.cpp
   unit/test_numpy_reference.cpp)
 target_include_directories(guiding_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")

@@ -1,12 +1,15 @@
 #include "guiding/campaign/case_metadata.hpp"
 
 #include <cctype>
+#include <set>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include <fmt/format.h>
 
 #include "guiding/table/csv.hpp"
+#include "guiding/table/py_format.hpp"
 
 namespace guiding::campaign {
 namespace {
@@ -102,6 +105,34 @@ std::optional<std::pair<double, double>> infer_plateau_window_mm_from_text(std::
     return std::nullopt;
   }
   return plateau_window_from_length_mm(*length, ramp_up_mm);
+}
+
+std::optional<std::pair<double, double>> infer_plateau_window_mm_from_sources(std::span<const std::string> sources,
+                                                                             double ramp_up_mm) {
+  std::vector<std::pair<double, double>> windows;
+  for (const auto& source : sources) {
+    if (const auto window = infer_plateau_window_mm_from_text(source, ramp_up_mm)) {
+      windows.push_back(*window);
+    }
+  }
+  if (windows.empty()) {
+    return std::nullopt;
+  }
+  // Python compares {(round(start, 9), round(end, 9))}.
+  auto round9 = [](double value) { return table::parse_number(fmt::format("{:.9f}", value)).value_or(value); };
+  std::set<std::pair<double, double>> unique;
+  for (const auto& [start, end] : windows) {
+    unique.emplace(round9(start), round9(end));
+  }
+  if (unique.size() != 1) {
+    std::string listed;
+    for (const auto& [start, end] : unique) {
+      listed += fmt::format("{}({}, {})", listed.empty() ? "" : ", ", table::py_float_repr(start),
+                            table::py_float_repr(end));
+    }
+    throw std::invalid_argument(fmt::format("Inconsistent plateau windows inferred from triplet sources: [{}]", listed));
+  }
+  return windows.front();
 }
 
 }  // namespace guiding::campaign
