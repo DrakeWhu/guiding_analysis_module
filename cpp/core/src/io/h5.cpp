@@ -424,6 +424,16 @@ std::uint64_t read_uint64_attribute(Id object, const std::string& name) {
   return values.front();
 }
 
+bool attribute_keeps_float32(Id object, const std::string& name) {
+  Lock lock(library_mutex());
+  const std::string context = attribute_context(object, name);
+  Handle attribute(check(H5Aopen(object, name.c_str(), H5P_DEFAULT), "H5Aopen", context));
+  Handle type(check(H5Aget_type(attribute.id()), "H5Aget_type", context));
+  const H5T_class_t type_class = H5Tget_class(type.id());
+  const std::size_t size = H5Tget_size(type.id());
+  return (type_class == H5T_FLOAT && size <= 4) || (type_class == H5T_INTEGER && size <= 2);
+}
+
 DatasetInfo dataset_info(Id dataset) {
   Lock lock(library_mutex());
   const std::string context = object_name(dataset);

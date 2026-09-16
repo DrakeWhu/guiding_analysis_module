@@ -1,9 +1,14 @@
 #include "guiding/table/py_format.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <charconv>
 #include <cmath>
 #include <cstdlib>
+#include <limits>
 #include <string_view>
+
+#include <fast_float/fast_float.h>
 
 namespace guiding::table {
 
@@ -141,6 +146,109 @@ std::string python_path_string(const std::filesystem::path& path) {
     start = end + 1;
   }
   return out.empty() ? "." : out;
+}
+
+std::string python_float_list_repr(std::span<const double> values) {
+  std::string out = "[";
+  for (std::size_t i = 0; i < values.size(); ++i) {
+    if (i != 0) {
+      out += ", ";
+    }
+    append_py_float_repr(out, values[i]);
+  }
+  out += "]";
+  return out;
+}
+
+namespace {
+
+std::string_view strip_py_whitespace(std::string_view text) {
+  const auto first = text.find_first_not_of(" \t\n\r\v\f");
+  if (first == std::string_view::npos) {
+    return {};
+  }
+  return text.substr(first, text.find_last_not_of(" \t\n\r\v\f") - first + 1);
+}
+
+bool iequals(std::string_view a, std::string_view b) {
+  return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) {
+           return std::tolower(static_cast<unsigned char>(x)) == std::tolower(static_cast<unsigned char>(y));
+         });
+}
+
+bool is_digit(char c) { return c >= '0' && c <= '9'; }
+
+// Removes "_" separators; nullopt unless every "_" sits between two digits.
+std::optional<std::string> remove_digit_separators(std::string_view text) {
+  std::string out;
+  out.reserve(text.size());
+  for (std::size_t i = 0; i < text.size(); ++i) {
+    if (text[i] == '_') {
+      if (i == 0 || i + 1 == text.size() || !is_digit(text[i - 1]) || !is_digit(text[i + 1])) {
+        return std::nullopt;
+      }
+      continue;
+    }
+    out.push_back(text[i]);
+  }
+  return out;
+}
+
+}  // namespace
+
+std::optional<double> parse_py_float(std::string_view text) {
+  text = strip_py_whitespace(text);
+  const auto cleaned = remove_digit_separators(text);
+  if (!cleaned || cleaned->empty()) {
+    return std::nullopt;
+  }
+  std::string_view body = *cleaned;
+  bool negative = false;
+  if (body.front() == '+' || body.front() == '-') {
+    negative = body.front() == '-';
+    body.remove_prefix(1);
+  }
+  if (iequals(body, "inf") || iequals(body, "infinity")) {
+    return negative ? -std::numeric_limits<double>::infinity() : std::numeric_limits<double>::infinity();
+  }
+  if (iequals(body, "nan")) {
+    return std::numeric_limits<double>::quiet_NaN();
+  }
+  // Only digits, one '.', and an exponent remain valid; fast_float would also
+  // accept "nan(...)" and "infinity" spellings that were handled above.
+  if (body.empty() || !(is_digit(body.front()) || body.front() == '.')) {
+    return std::nullopt;
+  }
+  double value = 0.0;
+  const auto result = fast_float::from_chars(body.data(), body.data() + body.size(), value);
+  if (result.ec != std::errc() || result.ptr != body.data() + body.size()) {
+    return std::nullopt;
+  }
+  return negative ? -value : value;
+}
+
+std::optional<std::int64_t> parse_py_int(std::string_view text) {
+  text = strip_py_whitespace(text);
+  const auto cleaned = remove_digit_separators(text);
+  if (!cleaned || cleaned->empty()) {
+    return std::nullopt;
+  }
+  std::string_view body = *cleaned;
+  const bool negative = body.front() == '-';
+  if (body.front() == '+' || body.front() == '-') {
+    body.remove_prefix(1);
+  }
+  if (body.empty() || !std::all_of(body.begin(), body.end(), is_digit)) {
+    return std::nullopt;
+  }
+  std::string digits = negative ? "-" : "";
+  digits.append(body);
+  std::int64_t value = 0;
+  const auto result = std::from_chars(digits.data(), digits.data() + digits.size(), value);
+  if (result.ec != std::errc() || result.ptr != digits.data() + digits.size()) {
+    return std::nullopt;
+  }
+  return value;
 }
 
 }  // namespace guiding::table

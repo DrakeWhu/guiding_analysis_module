@@ -16,6 +16,8 @@ int main(int argc, char** argv) {
       guiding::cli::add_case_command(app),
       guiding::cli::add_campaign_command(app),
       guiding::cli::add_triplet_command(app),
+      guiding::cli::add_particles_command(app),
+      guiding::cli::add_particles_campaign_command(app),
       guiding::cli::add_inspect_command(app),
   };
 

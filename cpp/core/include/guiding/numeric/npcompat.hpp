@@ -81,6 +81,11 @@ template <typename T>
 // Python round(x) for a float: ties to even. Throws for NaN or infinity.
 [[nodiscard]] std::int64_t round_half_even(double value);
 
+// libm pow(base, exponent), as Python float ** and numpy scalar ** call it.
+// Kept out of line with a runtime exponent so the compiler cannot rewrite
+// pow(x, 2.0) as x * x (glibc pow is not guaranteed to equal x * x).
+[[nodiscard]] double c_pow(double base, double exponent);
+
 // np.argmax / np.argmin: first occurrence; the first NaN wins when present.
 template <typename T>
 [[nodiscard]] std::size_t argmax(std::span<const T> values) {

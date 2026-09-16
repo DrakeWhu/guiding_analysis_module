@@ -11,6 +11,7 @@
 
 #include "guiding/campaign/case_metadata.hpp"
 #include "guiding/numeric/npcompat.hpp"
+#include "guiding/table/py_format.hpp"
 
 namespace guiding::products {
 namespace {
@@ -40,14 +41,6 @@ Record failure(Record base, const Record& extra, const std::string& reason) {
   return base;
 }
 
-std::string python_list_repr(const std::vector<std::string>& items) {
-  std::string out = "[";
-  for (std::size_t i = 0; i < items.size(); ++i) {
-    out += fmt::format("{}'{}'", i == 0 ? "" : ", ", items[i]);
-  }
-  return out + "]";
-}
-
 double finite_median(const std::vector<double>& values) {
   std::vector<double> finite;
   for (double v : values) {
@@ -70,7 +63,8 @@ double exp_quadratic_component(double value, double sigma) {
   if (!std::isfinite(value) || !std::isfinite(sigma) || sigma <= 0.0) {
     return kNaN;
   }
-  return std::exp(-std::pow(value / sigma, 2.0));
+  // Python: np.exp(-((value / sigma) ** 2)), float ** is libm pow.
+  return std::exp(-np::c_pow(value / sigma, 2.0));
 }
 
 double positive_log_ratio(double numerator, double denominator) {
@@ -130,7 +124,7 @@ Record score_singlecase_guiding_table(const table::CsvTable& table, const std::s
     }
   }
   if (!missing.empty()) {
-    return failure(base, {}, fmt::format("missing_columns: {}", python_list_repr(missing)));
+    return failure(base, {}, fmt::format("missing_columns: {}", table::python_list_repr(missing)));
   }
   if (table.rows.empty()) {
     return failure(base, {}, "empty_csv");
@@ -333,7 +327,7 @@ Record score_singlecase_guiding_table(const table::CsvTable& table, const std::s
 
 Record score_singlecase_guiding_csv(const std::filesystem::path& csv_path, const std::optional<std::string>& case_id,
                                     const PlateauOverride& plateau, const SingleCaseGuidingConfig& config) {
-  const std::string path_text = python_path_string(csv_path);
+  const std::string path_text = table::python_path_string(csv_path);
   const std::string cid = (case_id && !case_id->empty())
                               ? *case_id
                               : std::filesystem::path(path_text).parent_path().filename().string();
@@ -366,32 +360,5 @@ bool ensure_singlecase_guiding_score_csv(const std::filesystem::path& guiding_me
   return true;
 }
 
-std::string python_path_string(const std::filesystem::path& path) {
-  const std::string text = path.generic_string();
-  if (text.empty()) {
-    return ".";
-  }
-  const bool absolute = text.front() == '/';
-  std::string out = absolute ? "/" : "";
-  std::size_t start = 0;
-  bool first = true;
-  while (start <= text.size()) {
-    const std::size_t end = text.find('/', start);
-    const std::string_view part(text.data() + start,
-                                (end == std::string::npos ? text.size() : end) - start);
-    if (!part.empty() && part != ".") {
-      if (!first) {
-        out.push_back('/');
-      }
-      out.append(part);
-      first = false;
-    }
-    if (end == std::string::npos) {
-      break;
-    }
-    start = end + 1;
-  }
-  return out.empty() ? "." : out;
-}
 
 }  // namespace guiding::products

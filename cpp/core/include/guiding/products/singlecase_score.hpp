@@ -55,8 +55,4 @@ bool ensure_singlecase_guiding_score_csv(const std::filesystem::path& guiding_me
                                          const std::optional<std::string>& case_id, bool overwrite,
                                          std::filesystem::path* score_path_out = nullptr);
 
-// str(pathlib.Path(text)) for POSIX paths: collapses repeated separators, drops
-// "." components and a trailing separator.
-[[nodiscard]] std::string python_path_string(const std::filesystem::path& path);
-
 }  // namespace guiding::products

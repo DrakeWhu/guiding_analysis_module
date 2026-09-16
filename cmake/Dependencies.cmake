@@ -22,8 +22,15 @@ FetchContent_Declare(FastFloat
   URL_HASH SHA256=76f958dd97b1cf4d8862d1f0986a47d4bdfa8845252bae15ef0f40de3b95961f
   FIND_PACKAGE_ARGS)
 
+# resolved_parameters.json (particle exit targets).
+FetchContent_Declare(nlohmann_json
+  URL https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz
+  URL_HASH SHA256=42f6e95cad6ec532fd372391373363b62a14af6d771056dbfc86160e6dfff7aa
+  FIND_PACKAGE_ARGS 3.11)
+
 set(FMT_INSTALL OFF CACHE BOOL "" FORCE)
-FetchContent_MakeAvailable(fmt FastFloat)
+set(JSON_Install OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(fmt FastFloat nlohmann_json)
 
 if(GUIDING_BUILD_CLI OR GUIDING_BUILD_GUI)
   FetchContent_Declare(CLI11

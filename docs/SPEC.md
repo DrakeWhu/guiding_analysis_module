@@ -152,7 +152,53 @@ z_Ez_absmax_rel_um,propagation_mm,z_peak_relative_um
 - **Score:** `100·coverage·Σ wᵢ·cᵢ`, with weights `[0.35, 0.15, 0.45, 0.05]` normalised by their pairwise sum.
 - **Output:** a single row written by `pandas.DataFrame([result]).to_csv(index=False)`. Keys follow Python dict order, and each failure path emits its own subset of keys.
 
-## 5. CSV text
+## 5. Particle products (`particles.py`, `transverse.py`, `beamlike.py`, `soft50.py`, `particle_exit.py`)
+
+**Reading** (openpmd-viewer `read_species_data`, h5py backend):
+- The component is read as float64 (`output_type`). `weighting`, `positionOffset` and `mass` keep their stored dtype.
+- **ED-PIC correction:** when `macroWeighted == 1` and `weightingPower != 0`, apply `data *= w ** (-weightingPower)`.
+  - numpy's `fast_scalar_power` handles −1, 0.5 and 2 as reciprocal, sqrt and square.
+  - The exponent is an HDF5 attribute, so it is a numpy scalar and takes part in NumPy 2 promotion. float32 weights with a float64 `weightingPower` give float64 `1/w`. Only a float32 or small-integer attribute keeps float32.
+  - `data *= unitSI` behaves the same way.
+- **Momentum:** `u = p · (1/(m·c))`, applied only when every mass is non-zero. For a float32 mass dataset, `m·c` stays float32 because `c` is a Python float.
+- **Time:** `time_fs = time·timeUnitSI·1e15` (no `timeOffset`). `avail_species` and record components come from the first file only.
+
+**Scopes and rows** (`scripts/analyze_particle_case.py`):
+- **Scopes:** with several `--species`, the first scope is `all_electrons` (the species concatenated), followed by one scope per species in the order given. With one species, its name is the only scope.
+- **Summary row:** `{**selection_info, **summarize_dump(...)}`. Columns come from the first row's keys, in dict order. Beamlike columns are merged first; transverse and then soft50 columns overwrite them in place, so the seven empty transverse placeholders keep their positions.
+- **Weighted statistics:**
+  - `np.average` = `pairwise(a·w)/pairwise(w)`.
+  - The percentile does no interpolation: sort by value, take the cumulative sum, then `searchsorted(left)` at `p/100·total`.
+- **Scalar and array powers:**
+  - A float scalar `** 2` (Python float or `np.float64`) calls libm `pow`, which is not always equal to `x*x` (about 6 in 10⁴ random operands differ). C++ uses `np::c_pow`, with the exponent kept out of reach of constant folding.
+  - An array `** 2` is `np.square`, i.e. `x*x`.
+- **Acceptance:** rows for θ cuts × E cuts over the sorted unique grids; `accepted_charge_pC = Σw·e/1e-12`.
+- **soft50:** one curve row per sorted unique `energy_low`; missing columns are written as empty strings.
+
+**Iteration selection:**
+
+| `--which` | selection_info keys (in order) |
+|---|---|
+| `last` | `selection_mode`, `selected_particle_iteration` |
+| `all` | `selection_mode`, `analysis_stride` |
+| `exit` (legacy) | `selection_mode`, `exit_kind`, `guiding_metrics_csv`, `target_propagation_mm`, `target_guiding_iteration`, `target_guiding_propagation_mm`, `selected_particle_iteration`, `target_iteration_delta`, `available_particle_iterations_{min,max}`, `n_available_particle_iterations` [, `maximum_target_iteration_delta`, `target_iteration_alignment_status`] |
+| `exit` + `--resolved-parameters` | `selection_mode` (= `exit`, overwritten in place), `exit_kind`, the target keys, the exact-iteration keys, `guiding_context_available`, `guiding_metrics_csv` [, the guiding keys, `particle_vs_guiding_iteration_delta`] |
+
+- **Legacy target**, first match wins:
+  1. `--target-propagation-mm`.
+  2. `CASE/resolved_parameters.json`: `(plateau_end_z | plasma_end_z) − plasma_start_z`.
+  3. `case.env`:
+     - Lines are `KEY=VALUE`; an `export ` prefix is allowed.
+     - The value is the first `shlex.split` token. If shlex fails, the value is the text with quotes stripped.
+     - Plateau length comes from `PLATEAU_LENGTH_MM`…, else `CAP_PLATEAU_LENGTH_M`… ×1e3.
+  4. `_L<x>mm_` in the case name.
+- **Capillary target:** plateau + `--downramp-mm`, else `CAPILLARY_LENGTH_MM`…, else plateau + `DOWNRAMP_LENGTH_MM`…, else plateau with a `[WARN]`.
+- **Nearest iteration:**
+  - The guiding row is the first minimum of `|propagation_mm − target|`, with values parsed like pandas.
+  - The particle dump is the first minimum of `|it − target_it|`, so ties go to the earlier dump.
+- **Case directory:** `DIAG/../..` when DIAG's parent is named `diags`, else `OUTDIR/..`. Both are lexical, as in pathlib.
+
+## 6. CSV text
 
 | Writer | Line end | Float | NaN | bool | None |
 |---|---|---|---|---|---|
@@ -162,8 +208,10 @@ z_Ez_absmax_rel_um,propagation_mm,z_peak_relative_um
 - **Python `repr`:** shortest round-trip digits. It uses exponent notation when `decpt <= −4` or `decpt > 16`, e.g. `1e-05`, `1e+16`, `1000000000000000.0`.
 - **Quoting:** `QUOTE_MINIMAL`, which quotes fields containing `,`, `"`, `\r` or `\n`, plus a lone empty field.
 
-## 6. Compatibility quirks (kept on purpose)
+## 7. Compatibility quirks (kept on purpose)
 
 - **Plateau-token separators:** `case_metadata._PLATEAU_TOKEN_RE` accepts `\`, `/`, `s`, `S`, `_` and `-` around `L<x>mm`. It does not accept whitespace, because `\\s` in a raw string is a literal `s`. A `P` fraction separator (`L2P5mm`) raises `ValueError`.
 - **HDF5 counting:** readiness counts `*.h5` recursively, while the series listing only reads top-level `*.h5`/`*.hdf5` files.
 - **Duplicate iterations:** if two files carry the same iteration, the later one wins. C++ sorts filenames to make "later" deterministic; Python uses `os.listdir` order.
+- **Multi-species campaign directory:** `analyze_particle_campaign.py` resolves the particle diagnostic directory from the raw `--species` text. With `a,b`, it looks for `diags/a,b`, unless `--particle-diag-name` is given.
+- **Missing meshes group:** `describe_series` calls `list(None)` when a particle series has no meshes group, so Python fails. C++ prints `'avail_fields': []` and continues.

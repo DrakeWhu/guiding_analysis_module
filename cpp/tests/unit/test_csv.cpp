@@ -7,6 +7,7 @@
 
 #include "guiding/products/singlecase_score.hpp"
 #include "guiding/table/csv.hpp"
+#include "guiding/table/py_format.hpp"
 #include "guiding/table/record.hpp"
 
 using guiding::table::Cell;
@@ -55,7 +56,7 @@ TEST_CASE("Record keeps dict insertion order when keys are reassigned", "[csv]")
 }
 
 TEST_CASE("python_path_string mirrors str(pathlib.Path)", "[csv]") {
-  using guiding::products::python_path_string;
+  using guiding::table::python_path_string;
   CHECK(python_path_string("./out//case/") == "out/case");
   CHECK(python_path_string("/a/./b/") == "/a/b");
   CHECK(python_path_string("") == ".");

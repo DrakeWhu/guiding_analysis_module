@@ -120,4 +120,9 @@ std::int64_t round_half_even(double value) {
   return static_cast<std::int64_t>(std::nearbyint(value));
 }
 
+double c_pow(double base, double exponent) {
+  volatile double runtime_exponent = exponent;
+  return std::pow(base, static_cast<double>(runtime_exponent));
+}
+
 }  // namespace guiding::np

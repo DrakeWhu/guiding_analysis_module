@@ -10,12 +10,23 @@ Coverage built into the three cases:
   different staggering, contiguous float64 datasets
 - uniform: cell-centred everywhere, non-zero timeOffset
 - vacuum: float32, gzip-chunked datasets (HDF5 read path), E/z unitSI != 1
+
+Particle diagnostics (quasi-random Halton sampling, also deterministic):
+- channel: diags/plasma_electrons with "electrons" (constant positionOffset) and
+  "ionized_electrons" (macro-weighted momenta, dataset positionOffset, empty at
+  the last dump), resolved_parameters.json with exact exit targets
+- uniform: diags/electron_particles (legacy layout), float32
+  gzip-chunked, positions in micrometres (unitSI 1e-6), macro-weighted
+  momenta, case.env with plateau/downramp lengths
+- vacuum: no particle diagnostic
 """
 from __future__ import annotations
 
 import argparse
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
+from statistics import NormalDist
 
 import h5py
 import numpy as np
@@ -151,6 +162,260 @@ def write_iteration(path: Path, case: Case, k: int) -> None:
             dataset.attrs["unitSI"] = np.float64(case.ez_unit_si if component == "z" else 1.0)
 
 
+ELECTRON_MASS_KG = 9.1093837015e-31
+ELECTRON_CHARGE_C = 1.602176634e-19
+SPEED_OF_LIGHT = 299792458.0
+ELECTRON_REST_ENERGY_MEV = 0.51099895
+HALTON_BASES = (2, 3, 5, 7, 11, 13, 17, 19)
+NORMAL = NormalDist()
+
+
+@dataclass(frozen=True)
+class ParticleSpecies:
+    name: str
+    count: int
+    bunch_fraction: float
+    energy_scale_mev: float
+    macro_weighted_momentum: bool = False
+    offset_dataset: bool = False
+    empty_iterations: tuple[int, ...] = ()
+
+
+@dataclass(frozen=True)
+class ParticleDiag:
+    case_name: str
+    directory: str
+    iterations: tuple[int, ...]
+    species: tuple[ParticleSpecies, ...]
+    dtype: str = "f8"
+    chunked: bool = False
+    position_unit_si: float = 1.0
+
+
+PARTICLE_DIAGS = (
+    ParticleDiag(
+        case_name=CASES[0].name,
+        directory="plasma_electrons",
+        iterations=(5400, 6150, 6800),
+        species=(
+            ParticleSpecies("electrons", count=1500, bunch_fraction=0.3, energy_scale_mev=260.0),
+            ParticleSpecies(
+                "ionized_electrons",
+                count=600,
+                bunch_fraction=0.45,
+                energy_scale_mev=120.0,
+                macro_weighted_momentum=True,
+                offset_dataset=True,
+                empty_iterations=(6800,),
+            ),
+        ),
+    ),
+    ParticleDiag(
+        case_name=CASES[1].name,
+        directory="electron_particles",
+        iterations=(0, 5400, 6800),
+        species=(
+            ParticleSpecies(
+                "electrons",
+                count=2000,
+                bunch_fraction=0.25,
+                energy_scale_mev=90.0,
+                macro_weighted_momentum=True,
+            ),
+        ),
+        dtype="f4",
+        chunked=True,
+        position_unit_si=1.0e-6,
+    ),
+)
+
+RESOLVED_PARAMETERS = {
+    CASES[0].name: {
+        "plasma_start_z": 0.0,
+        "plateau_end_z": 6.2e-3,
+        "plasma_end_z": 6.9e-3,
+        "particle_diagnostic_targets": {
+            "plateau_exit": {
+                "iteration": 6150,
+                "target_distance_m": 6.2e-3,
+                "dump_distance_m": 6.15e-3,
+                "distance_error_m": -5.0e-5,
+            },
+            "capillary_exit": {"iteration": 6800, "target_distance_m": 6.9e-3},
+        },
+    },
+}
+
+CASE_ENV = {
+    CASES[1].name: "\n".join(
+        [
+            "# synthetic case environment",
+            'export PLATEAU_LENGTH_MM="2"',
+            "DOWNRAMP_LENGTH_MM=0.5  # trailing comment is a second shlex token",
+            "CASE_LABEL='uniform reference'",
+            "",
+        ]
+    ),
+}
+
+
+def radical_inverse(index: int, base: int) -> float:
+    result = 0.0
+    scale = 1.0 / base
+    while index > 0:
+        index, digit = divmod(index, base)
+        result += digit * scale
+        scale /= base
+    return result
+
+
+def normal(u: float) -> float:
+    return NORMAL.inv_cdf(min(max(u, 1.0e-9), 1.0 - 1.0e-9))
+
+
+def species_arrays(diag: ParticleDiag, species_index: int, species: ParticleSpecies, k: int) -> dict[str, np.ndarray]:
+    iteration = diag.iterations[k]
+    n = 0 if iteration in species.empty_iterations else species.count
+    window_start = iteration * 1.0e-6
+    z_front = window_start + 0.84 * (N_Z - 1) * DZ
+    growth = 0.6 + 0.2 * k
+
+    x = np.empty(n)
+    y = np.empty(n)
+    z = np.empty(n)
+    ux = np.empty(n)
+    uy = np.empty(n)
+    uz = np.empty(n)
+    w = np.empty(n)
+    start = 1 + 211 * k + 7919 * species_index
+    for i in range(n):
+        h = [radical_inverse(start + i, base) for base in HALTON_BASES]
+        if h[0] < species.bunch_fraction:
+            energy = species.energy_scale_mev * growth * (0.08 + 1.4 * h[1] ** 0.7)
+            gamma = 1.0 + energy / ELECTRON_REST_ENERGY_MEV
+            u = np.sqrt(gamma * gamma - 1.0)
+            ux[i] = u * 3.0e-3 * normal(h[2])
+            uy[i] = u * 2.0e-3 * normal(h[3])
+            uz[i] = np.sqrt(max(u * u - ux[i] ** 2 - uy[i] ** 2, 0.0))
+            if h[4] > 0.97:
+                uz[i] = -uz[i]
+            z[i] = z_front - 40.0e-6 - 15.0e-6 * abs(normal(h[4]))
+            x[i] = 3.0e-6 * normal(h[5])
+            y[i] = 3.0e-6 * normal(h[6])
+            w[i] = 2.2e6 * (0.5 + h[7])
+        else:
+            ux[i] = 0.02 * normal(h[1])
+            uy[i] = 0.02 * normal(h[2])
+            uz[i] = 0.03 * normal(h[3])
+            z[i] = window_start + 128.0e-6 * h[4]
+            x[i] = 20.0e-6 * (2.0 * h[5] - 1.0)
+            y[i] = 20.0e-6 * (2.0 * h[6] - 1.0)
+            w[i] = 0.0 if i == 1 else 5.0e6 * (0.5 + h[7])
+    return {"x": x, "y": y, "z": z, "ux": ux, "uy": uy, "uz": uz, "w": w, "offset_z": np.full(n, window_start)}
+
+
+def write_constant_record(group: h5py.Group, name: str, value: float, n: int, unit_dimension: list[float]) -> h5py.Group:
+    record = group.create_group(name)
+    record.attrs["value"] = np.float64(value)
+    record.attrs["shape"] = np.array([n], dtype=np.uint64)
+    record.attrs["unitSI"] = np.float64(1.0)
+    record.attrs["unitDimension"] = np.array(unit_dimension)
+    record.attrs["timeOffset"] = np.float32(0.0)
+    return record
+
+
+def set_weighting_attrs(record: h5py.Group | h5py.Dataset, macro_weighted: int, weighting_power: float) -> None:
+    record.attrs["macroWeighted"] = np.uint32(macro_weighted)
+    record.attrs["weightingPower"] = np.float64(weighting_power)
+
+
+def write_particle_iteration(path: Path, diag: ParticleDiag, k: int) -> None:
+    iteration = diag.iterations[k]
+    dataset_options = {"chunks": True, "compression": "gzip", "compression_opts": 4} if diag.chunked else {}
+    with h5py.File(path, "w") as f:
+        f.attrs["openPMD"] = np.bytes_("1.1.0")
+        f.attrs["openPMDextension"] = np.uint32(1)
+        f.attrs["basePath"] = np.bytes_("/data/%T/")
+        f.attrs["meshesPath"] = np.bytes_("fields/")
+        f.attrs["particlesPath"] = np.bytes_("particles/")
+        f.attrs["iterationEncoding"] = np.bytes_("fileBased")
+        f.attrs["iterationFormat"] = np.bytes_("openpmd_%06T.h5")
+
+        it = f.create_group(f"data/{iteration}")
+        it.attrs["time"] = np.float64(iteration * DT)
+        it.attrs["dt"] = np.float64(DT)
+        it.attrs["timeUnitSI"] = np.float64(1.0)
+        it.create_group("fields")
+
+        for species_index, species in enumerate(diag.species):
+            arrays = species_arrays(diag, species_index, species, k)
+            n = len(arrays["w"])
+            group = it.create_group(f"particles/{species.name}")
+
+            def dataset(parent: h5py.Group, name: str, values: np.ndarray, unit_si: float = 1.0) -> h5py.Dataset:
+                options = dataset_options if n > 0 else {}
+                out = parent.create_dataset(name, data=values.astype(diag.dtype), track_times=False, **options)
+                out.attrs["unitSI"] = np.float64(unit_si)
+                return out
+
+            weights = arrays["w"].astype(diag.dtype).astype(np.float64)
+            momentum_scale = ELECTRON_MASS_KG * SPEED_OF_LIGHT
+            momentum = group.create_group("momentum")
+            momentum.attrs["unitDimension"] = np.array([1.0, 1.0, -1.0, 0.0, 0.0, 0.0, 0.0])
+            momentum.attrs["timeOffset"] = np.float32(0.0)
+            set_weighting_attrs(momentum, int(species.macro_weighted_momentum), 1.0)
+            for axis in ("x", "y", "z"):
+                values = arrays["u" + axis] * momentum_scale
+                if species.macro_weighted_momentum:
+                    values = values * weights
+                dataset(momentum, axis, values)
+
+            position = group.create_group("position")
+            position.attrs["unitDimension"] = np.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+            position.attrs["timeOffset"] = np.float32(0.0)
+            set_weighting_attrs(position, 0, 0.0)
+            offset = group.create_group("positionOffset")
+            offset.attrs["unitDimension"] = np.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+            offset.attrs["timeOffset"] = np.float32(0.0)
+            set_weighting_attrs(offset, 0, 0.0)
+            for axis in ("x", "y", "z"):
+                offset_values = arrays["offset_z"] if axis == "z" else np.zeros(n)
+                dataset(position, axis, (arrays[axis] - offset_values) / diag.position_unit_si, diag.position_unit_si)
+                if species.offset_dataset:
+                    dataset(offset, axis, offset_values)
+                else:
+                    constant = offset.create_group(axis)
+                    constant.attrs["value"] = np.float64(offset_values[0] if n and axis == "z" else 0.0)
+                    constant.attrs["shape"] = np.array([n], dtype=np.uint64)
+                    constant.attrs["unitSI"] = np.float64(1.0)
+
+            weighting = dataset(group, "weighting", arrays["w"])
+            set_weighting_attrs(weighting, 1, 1.0)
+            weighting.attrs["unitDimension"] = np.zeros(7)
+            weighting.attrs["timeOffset"] = np.float32(0.0)
+
+            charge = write_constant_record(group, "charge", -ELECTRON_CHARGE_C, n, [0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0])
+            set_weighting_attrs(charge, 0, 1.0)
+            mass = write_constant_record(group, "mass", ELECTRON_MASS_KG, n, [0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+            set_weighting_attrs(mass, 0, 1.0)
+            ids = group.create_dataset("id", data=np.arange(n, dtype=np.uint64), track_times=False)
+            set_weighting_attrs(ids, 0, 0.0)
+
+
+def write_particle_fixtures(campaign: Path) -> None:
+    for diag in PARTICLE_DIAGS:
+        directory = campaign / diag.case_name / "diags" / diag.directory
+        directory.mkdir(parents=True, exist_ok=True)
+        for old in directory.glob("*.h5"):
+            old.unlink()
+        for k, iteration in enumerate(diag.iterations):
+            write_particle_iteration(directory / f"openpmd_{iteration:06d}.h5", diag, k)
+    for case_name, payload in RESOLVED_PARAMETERS.items():
+        (campaign / case_name / "resolved_parameters.json").write_text(json.dumps(payload, indent=2) + "\n")
+    for case_name, text in CASE_ENV.items():
+        (campaign / case_name / "case.env").write_text(text)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--outdir", type=Path, default=DEFAULT_OUT)
@@ -167,6 +432,7 @@ def main() -> None:
             write_iteration(diag / f"openpmd_{iteration:06d}.h5", case, k)
         rows.append(f"{case.name}\t{case.name}")
     (campaign / "cases_full.tsv").write_text("\n".join(rows) + "\n")
+    write_particle_fixtures(campaign)
     print(f"wrote {len(CASES)} cases x {len(ITERATIONS)} iterations to {campaign}")
 
 

@@ -1,0 +1,5 @@
+case_id,case_name,species_scope,iteration,selection_mode,selected_particle_iteration,theta_cut_mrad,E_min_MeV,accepted_charge_pC,accepted_weight,accepted_n_macroparticles,longitudinal_coordinate,forward_only
+001,001_f20_uni_n4e18cm3_L2mm_refd150um_foc0um_rz,electrons,6800,last,6800,1.0,5.0,14.134844165490865,88222758.125,39,z,False
+001,001_f20_uni_n4e18cm3_L2mm_refd150um_foc0um_rz,electrons,6800,last,6800,1.0,40.0,12.356390710953669,77122524.75,34,z,False
+001,001_f20_uni_n4e18cm3_L2mm_refd150um_foc0um_rz,electrons,6800,last,6800,3.0,5.0,88.51045298652043,552438795.5,249,z,False
+001,001_f20_uni_n4e18cm3_L2mm_refd150um_foc0um_rz,electrons,6800,last,6800,3.0,40.0,75.049219052921,468420381.75,210,z,False

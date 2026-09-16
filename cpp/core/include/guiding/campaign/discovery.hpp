@@ -71,6 +71,13 @@ struct TripletInfo {
 [[nodiscard]] std::filesystem::path resolve_field_diag_dir(const std::filesystem::path& case_dir,
                                                            bool require_exists = true);
 
+// Particle diagnostic of a species (diagnostics.py:resolve_particle_diag_dir):
+// an explicit CASE/diags/<name> override unless it is empty or "auto",
+// otherwise the per-species candidates (legacy layouts last).
+[[nodiscard]] std::filesystem::path resolve_particle_diag_dir(const std::filesystem::path& case_dir,
+                                                              const std::string& species_name,
+                                                              const std::string& particle_diag_name = "auto");
+
 struct H5Scan {
   std::int64_t count = 0;
   std::optional<double> newest_mtime_s;

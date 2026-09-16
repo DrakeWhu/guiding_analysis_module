@@ -101,6 +101,9 @@ class File {
 [[nodiscard]] double read_double_attribute(Id object, const std::string& name);
 [[nodiscard]] std::vector<double> read_double_array_attribute(Id object, const std::string& name);
 [[nodiscard]] std::uint64_t read_uint64_attribute(Id object, const std::string& name);
+// Whether numpy keeps float32 when combining a float32 array with this
+// attribute's scalar (NumPy 2 promotion): float16/32 and 8/16-bit integers.
+[[nodiscard]] bool attribute_keeps_float32(Id object, const std::string& name);
 
 [[nodiscard]] DatasetInfo dataset_info(Id dataset);
 // Shape of a constant openPMD record component (attributes "value" and "shape").

@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -24,5 +25,15 @@ void append_py_float_repr(std::string& out, double value);
 [[nodiscard]] std::string py_float_repr(double value);
 
 [[nodiscard]] inline const char* py_bool(bool value) noexcept { return value ? "True" : "False"; }
+
+// "[2.0, 5.0]": repr() of a list of float.
+[[nodiscard]] std::string python_float_list_repr(std::span<const double> values);
+
+// Python float(str): surrounding whitespace, sign, "_" between digits,
+// "inf"/"infinity"/"nan" in any case; nullopt where Python raises ValueError.
+[[nodiscard]] std::optional<double> parse_py_float(std::string_view text);
+
+// Python int(str) in base 10; nullopt for invalid text or values outside int64.
+[[nodiscard]] std::optional<std::int64_t> parse_py_int(std::string_view text);
 
 }  // namespace guiding::table

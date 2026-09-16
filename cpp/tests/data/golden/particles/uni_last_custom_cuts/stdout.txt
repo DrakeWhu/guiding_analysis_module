@@ -1,0 +1,35 @@
+=== Particle case analysis ===
+case_dir          = cpp/tests/data/synthetic/campaign/001_f20_uni_n4e18cm3_L2mm_refd150um_foc0um_rz
+diag              = cpp/tests/data/synthetic/campaign/001_f20_uni_n4e18cm3_L2mm_refd150um_foc0um_rz/diags/electron_particles
+outdir            = cpp/tests/data/golden/particles/uni_last_custom_cuts
+species           = ['electrons']
+which             = last
+exit_kind         = plateau
+target_prop_mm    = None
+resolved_params   = None
+guiding_metrics   = cpp/tests/data/synthetic/campaign/001_f20_uni_n4e18cm3_L2mm_refd150um_foc0um_rz/guiding_metrics.csv
+max_target_delta  = None
+stride            = 1
+hot_energy_mev    = 20.0
+longitudinal      = z
+forward_cut       = False
+exit_window_mm    = None
+downramp_mm      = None
+spectrum_emin    = 0.0
+spectrum_log_y   = False
+plots_only       = False
+accept_theta_mrad= [3.0, 1.0]
+accept_Emin_MeV  = [40.0, 5.0]
+soft50_E_low     = 15.0
+soft50_E_target  = 60.0
+soft50_N_ref     = 200.0
+soft50_curve_low = [20.0, 5.0, 15.0]
+==============================
+[SERIES] {'iterations': [0, 5400, 6800], 'avail_fields': [], 'avail_species': ['electrons']}
+[SELECTION]
+  selection_mode = last
+  selected_particle_iteration = 6800
+[READ] iteration 6800
+[OK] wrote cpp/tests/data/golden/particles/uni_last_custom_cuts/particle_summary.csv
+[OK] wrote cpp/tests/data/golden/particles/uni_last_custom_cuts/particle_acceptance_curves.csv
+[OK] wrote cpp/tests/data/golden/particles/uni_last_custom_cuts/particle_soft50_curves.csv

@@ -452,6 +452,43 @@ fs::path resolve_field_diag_dir(const fs::path& case_dir, bool require_exists) {
       python_path_string(case_dir), python_path_string(candidates[0]), python_path_string(candidates[1])));
 }
 
+fs::path resolve_particle_diag_dir(const fs::path& case_dir, const std::string& species_name,
+                                   const std::string& particle_diag_name) {
+  const fs::path diags = case_dir / "diags";
+  std::error_code error;
+  if (!particle_diag_name.empty() && particle_diag_name != "auto") {
+    const fs::path candidate = diags / particle_diag_name;
+    if (fs::is_directory(candidate, error)) {
+      return candidate;
+    }
+    throw std::runtime_error(fmt::format("Requested particle diagnostic directory does not exist: {}",
+                                         python_path_string(candidate)));
+  }
+
+  std::vector<std::string> names;
+  if (species_name == "electrons") {
+    names = {"plasma_electrons",    "plasma_electrons/openpmd", "electron_particles/openpmd",
+             "electron_particles", "electrons/openpmd",        "electrons"};
+  } else if (species_name == "plasma_electrons") {
+    names = {"plasma_electrons", "plasma_electrons/openpmd"};
+  } else if (species_name == "ionized_electrons") {
+    names = {"ionized_electrons", "ionized_electrons/openpmd"};
+  } else {
+    names = {species_name, species_name + "/openpmd"};
+  }
+  std::string shown;
+  for (const auto& name : names) {
+    const fs::path candidate = diags / name;
+    if (fs::is_directory(candidate, error)) {
+      return candidate;
+    }
+    shown += (shown.empty() ? "" : ", ") + python_path_string(candidate);
+  }
+  throw std::runtime_error(fmt::format(
+      "No supported particle diagnostic directory found for species {} in case {}. Expected one of: {}",
+      table::py_str_repr(species_name), python_path_string(case_dir), shown));
+}
+
 H5Scan scan_h5_files(const fs::path& diag_dir) {
   H5Scan scan;
   std::error_code error;
