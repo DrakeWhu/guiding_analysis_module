@@ -44,3 +44,27 @@ diag1/
 Thumbs.db
 .vscode/
 .idea/
+
+# C++ / CMake build products
+/build*/
+/out/
+cmake-build-*/
+CMakeUserPresets.json
+compile_commands.json
+.cache/
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.so.*
+*.dylib
+*.dll
+*.exe
+*.pdb
+imgui.ini
+
+# Small committed C++ test fixtures (override the data/media ignores above)
+!cpp/tests/data/**/
+!cpp/tests/data/**/*.h5
+!cpp/tests/data/**/*.csv

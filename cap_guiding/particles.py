@@ -15,6 +15,7 @@ import numpy as np
 from .beamlike import BeamlikeConfig, add_beamlike_metrics
 from .metrics import E_CHARGE_C
 from .openpmd_io import open_series, get_iterations
+from .soft50 import Soft50Config, summarize_soft50_metrics
 from .transverse import MRAD_PER_RAD, UM_PER_M, summarize_transverse_metrics
 
 ELECTRON_REST_ENERGY_MEV = 0.51099895
@@ -25,6 +26,7 @@ DEFAULT_ACCEPTANCE_E_MIN_MEV = (10.0, 25.0, 50.0, 100.0, 150.0, 200.0, 250.0, 30
 PARTICLE_ACCEPTANCE_COLUMNS = [
     "case_id",
     "case_name",
+    "species_scope",
     "iteration",
     "selection_mode",
     "selected_particle_iteration",
@@ -63,6 +65,36 @@ class ParticleDump:
     @property
     def kinetic_energy_mev(self) -> np.ndarray:
         return kinetic_energy_mev_from_u(self.ux, self.uy, self.uz)
+
+
+def concatenate_particle_dumps(dumps: Sequence[ParticleDump]) -> ParticleDump:
+    """Concatenate species from the same openPMD iteration for total-beam metrics."""
+
+    selected = list(dumps)
+    if not selected:
+        raise ValueError("At least one ParticleDump is required")
+    iterations = {int(dump.iteration) for dump in selected}
+    if len(iterations) != 1:
+        raise ValueError(f"Cannot combine different iterations: {sorted(iterations)}")
+
+    finite_times = [float(dump.time_fs) for dump in selected if np.isfinite(dump.time_fs)]
+    if finite_times and not np.allclose(finite_times, finite_times[0]):
+        raise ValueError("Cannot combine ParticleDump objects with different times")
+
+    def joined(name: str) -> np.ndarray:
+        return np.concatenate([np.asarray(getattr(dump, name)) for dump in selected])
+
+    return ParticleDump(
+        iteration=next(iter(iterations)),
+        time_fs=finite_times[0] if finite_times else float("nan"),
+        x_m=joined("x_m"),
+        y_m=joined("y_m"),
+        z_m=joined("z_m"),
+        ux=joined("ux"),
+        uy=joined("uy"),
+        uz=joined("uz"),
+        w=joined("w"),
+    )
 
 
 def gamma_from_u(ux: np.ndarray, uy: np.ndarray, uz: np.ndarray) -> np.ndarray:
@@ -211,6 +243,8 @@ def summarize_dump(
     exit_window_mm: float | None = None,
     forward_only: bool = True,
     beamlike_config: BeamlikeConfig | None = None,
+    soft50_config: Soft50Config | None = None,
+    species_scope: str = "",
 ) -> dict[str, Any]:
     energy = dump.kinetic_energy_mev
     w = dump.w
@@ -239,6 +273,7 @@ def summarize_dump(
     total_weight = float(np.sum(w[finite])) if np.any(finite) else 0.0
 
     row: dict[str, Any] = {
+        "species_scope": str(species_scope),
         "iteration": int(dump.iteration),
         "time_fs": float(dump.time_fs),
         "n_macroparticles_total": int(len(w)),
@@ -305,6 +340,17 @@ def summarize_dump(
         )
     )
 
+    if soft50_config is not None:
+        out.update(
+            summarize_soft50_metrics(
+                dump,
+                config=soft50_config,
+                longitudinal=longitudinal,
+                exit_window_mm=exit_window_mm,
+                forward_only=forward_only,
+            )
+        )
+
     return out
 
 
@@ -366,6 +412,7 @@ def summarize_acceptance_curves(
     *,
     case_id: str = "",
     case_name: str = "",
+    species_scope: str = "",
     selection_mode: str = "",
     selected_particle_iteration: int | None = None,
     theta_cuts_mrad: Sequence[float] = DEFAULT_ACCEPTANCE_THETA_CUTS_MRAD,
@@ -419,6 +466,7 @@ def summarize_acceptance_curves(
                 {
                     "case_id": str(case_id),
                     "case_name": str(case_name),
+                    "species_scope": str(species_scope),
                     "iteration": int(dump.iteration),
                     "selection_mode": str(selection_mode),
                     "selected_particle_iteration": selected_it,
@@ -476,6 +524,7 @@ def save_energy_spectrum(
     log_y: bool = False,
     longitudinal: str = "z",
     forward_only: bool = False,
+    species_scope: str | None = None,
 ) -> Path:
     """
     Save a weighted kinetic-energy spectrum for selected electrons.
@@ -516,7 +565,10 @@ def save_energy_spectrum(
     if not np.any(valid):
         return _save_no_data_plot(
             path=path,
-            title=f"Electron energy spectrum, iteration {dump.iteration}",
+            title=(
+                f"Electron energy spectrum, iteration {dump.iteration}"
+                f"{_species_scope_title_suffix(species_scope)}"
+            ),
             message="No valid particles selected",
             xlabel="electron kinetic energy [MeV]",
             ylabel="weighted counts [a.u.]",
@@ -528,7 +580,10 @@ def save_energy_spectrum(
     if not np.any(plot_mask):
         return _save_no_data_plot(
             path=path,
-            title=f"Electron energy spectrum, iteration {dump.iteration}",
+            title=(
+                f"Electron energy spectrum, iteration {dump.iteration}"
+                f"{_species_scope_title_suffix(species_scope)}"
+            ),
             message=f"No electrons with E >= {emin_mev:g} MeV",
             xlabel="electron kinetic energy [MeV]",
             ylabel="weighted counts [a.u.]",
@@ -596,6 +651,7 @@ def save_energy_spectrum(
     ax.set_title(
         f"Electron energy spectrum, iteration {dump.iteration}\n"
         f"plotted electrons: E >= {emin_mev:g} MeV"
+        f"{_species_scope_title_suffix(species_scope)}"
     )
     ax.grid(True, alpha=0.25)
 
@@ -649,6 +705,11 @@ def _save_no_data_plot(
     plt.close(fig)
 
     return path
+
+
+def _species_scope_title_suffix(species_scope: str | None) -> str:
+    value = "" if species_scope is None else str(species_scope).strip()
+    return "" if not value else f"\nspecies scope: {value}"
 
 
 def _scatter_style_for_npoints(n: int) -> tuple[float, float]:
@@ -732,6 +793,7 @@ def save_transverse_phase_space_plots(
     exit_window_mm: float | None = None,
     forward_only: bool = True,
     max_points: int = 200_000,
+    species_scope: str | None = None,
 ) -> list[Path]:
     """Save transverse hot-electron phase-space plots for one dump.
 
@@ -754,7 +816,10 @@ def save_transverse_phase_space_plots(
             paths.append(
                 _save_no_data_plot(
                     path=path,
-                    title="Hot-electron transverse phase space",
+                    title=(
+                        "Hot-electron transverse phase space"
+                        f"{_species_scope_title_suffix(species_scope)}"
+                    ),
                     message=(
                         "Transverse x/y plots are only implemented "
                         f"for longitudinal='z'\nreceived longitudinal={longitudinal!r}"
@@ -791,6 +856,7 @@ def save_transverse_phase_space_plots(
                     path=path,
                     title=(
                         f"Hot-electron transverse phase space, iteration {dump.iteration}"
+                        f"{_species_scope_title_suffix(species_scope)}"
                     ),
                     message=f"No selected electrons\nE >= {hot_energy_mev:g} MeV",
                     xlabel="transverse coordinate [um]",
@@ -843,6 +909,7 @@ def save_transverse_phase_space_plots(
         ax.set_title(
             f"{title}, iteration {dump.iteration}\n"
             f"E >= {hot_energy_mev:g} MeV, forward_only = {bool(forward_only)}"
+            f"{_species_scope_title_suffix(species_scope)}"
         )
         ax.grid(True, alpha=0.25)
 
@@ -897,6 +964,7 @@ def save_longitudinal_phase_space(
     exit_window_mm: float | None = None,
     forward_only: bool = True,
     max_points: int = 200_000,
+    species_scope: str | None = None,
 ) -> Path:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -917,6 +985,7 @@ def save_longitudinal_phase_space(
             path=path,
             title=(
                 f"Hot-electron longitudinal phase space, E >= {hot_energy_mev:g} MeV"
+                f"{_species_scope_title_suffix(species_scope)}"
             ),
             message=f"No selected electrons\nE >= {hot_energy_mev:g} MeV",
             xlabel=q_label,
@@ -946,6 +1015,7 @@ def save_longitudinal_phase_space(
     ax.set_title(
         f"Hot-electron longitudinal phase space, iteration {dump.iteration}\n"
         f"E >= {hot_energy_mev:g} MeV, N = {idx.size}"
+        f"{_species_scope_title_suffix(species_scope)}"
     )
     ax.grid(True, alpha=0.25)
     fig.tight_layout()
@@ -964,6 +1034,7 @@ def save_longitudinal_energy_space(
     exit_window_mm: float | None = None,
     forward_only: bool = True,
     max_points: int = 200_000,
+    species_scope: str | None = None,
 ) -> Path:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -985,6 +1056,7 @@ def save_longitudinal_energy_space(
             path=path,
             title=(
                 f"Hot-electron longitudinal energy space, E >= {hot_energy_mev:g} MeV"
+                f"{_species_scope_title_suffix(species_scope)}"
             ),
             message=f"No selected electrons\nE >= {hot_energy_mev:g} MeV",
             xlabel=q_label,
@@ -1011,6 +1083,7 @@ def save_longitudinal_energy_space(
     ax.set_title(
         f"Hot-electron longitudinal energy space, iteration {dump.iteration}\n"
         f"E >= {hot_energy_mev:g} MeV, N = {idx.size}"
+        f"{_species_scope_title_suffix(species_scope)}"
     )
     ax.grid(True, alpha=0.25)
     fig.tight_layout()
