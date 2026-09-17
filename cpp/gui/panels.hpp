@@ -19,6 +19,8 @@ void draw_case_panel(App& app, UiState& ui, DataStore& store);
 void draw_triplet_panel(UiState& ui, DataStore& store);
 void draw_overview_panel(UiState& ui, DataStore& store);
 void draw_log_panel(UiState& ui, DataStore& store);
+void draw_fields_panel(App& app, UiState& ui, DataStore& store);
+void draw_particles_panel(App& app, UiState& ui, DataStore& store);
 
 // Modal directory browser opened with ImGui::OpenPopup(id); true when a
 // directory was chosen (written to `path`).
@@ -52,6 +54,19 @@ void line_series(const char* label, std::span<const double> x, std::span<const d
 // Finite [min, max] of the values padded by 3 % (unit range when empty), used as
 // the initial x range of linked subplots, which do not fit linked axes themselves.
 [[nodiscard]] std::pair<double, double> padded_range(std::span<const double> values);
+
+// ImGuiTabItemFlags_SetSelected when `name` was requested with --tab.
+[[nodiscard]] ImGuiTabItemFlags tab_flags(const UiState& ui, const char* name);
+
+// "PNG" and "CSV" buttons on the right of the current line; returns true when CSV was pressed.
+bool export_buttons(App& app, const char* window, bool csv_available);
+
+// Column CSV (LF, shortest round-trip numbers, NaN as "nan"); shorter columns are padded with empty cells.
+[[nodiscard]] std::string columns_csv(std::initializer_list<std::pair<const char*, std::span<const double>>> columns);
+
+// Iteration chooser over a sorted list with a "latest" toggle; returns the chosen iteration.
+std::int64_t iteration_selector(const char* id, std::span<const std::int64_t> iterations, std::int64_t& selected,
+                                bool& follow_latest);
 
 // A read-only, scrollable table of a Frame (numbers shown with %.6g).
 void frame_table(const char* id, const table::Frame& frame, float height = 0.0f);

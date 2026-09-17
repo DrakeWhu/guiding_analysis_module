@@ -8,6 +8,7 @@
 #include <stdexcept>
 
 #include <fmt/format.h>
+#include <fmt/ranges.h>
 
 #include "guiding/campaign/case_metadata.hpp"
 #include "guiding/exec/parallel.hpp"
@@ -15,6 +16,7 @@
 #include "guiding/products/case_reduction.hpp"
 #include "guiding/products/singlecase_score.hpp"
 #include "guiding/table/py_format.hpp"
+#include "png_writer.hpp"
 
 namespace guiding::gui {
 namespace {
@@ -22,6 +24,7 @@ namespace {
 namespace fs = std::filesystem;
 constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
 constexpr std::size_t kMaxLogEntries = 5000;
+constexpr std::size_t kMaxCachedProducts = 48;
 
 double seconds_since(std::chrono::steady_clock::time_point start) {
   return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
@@ -475,6 +478,162 @@ std::shared_ptr<const TripletData> DataStore::triplet(const CampaignSnapshot& sn
     triplet_loading_.erase(label);
   });
   return current;
+}
+
+void DataStore::write_png_async(fs::path path, int width, int height, std::vector<std::uint8_t> rgba) {
+  post_io([this, path = std::move(path), width, height, rgba = std::move(rgba)] {
+    try {
+      if (path.has_parent_path()) {
+        fs::create_directories(path.parent_path());
+      }
+      write_png_rgba(path, width, height, rgba);
+      log_.add(LogLevel::Info, fmt::format("[EXPORT] {}", path.string()));
+    } catch (const std::exception& error) {
+      log_.add(LogLevel::Error, fmt::format("[EXPORT] {}: {}", path.string(), error.what()));
+    }
+  });
+}
+
+std::shared_ptr<const void> DataStore::cached(const std::string& key,
+                                              std::function<std::shared_ptr<const void>()> loader) {
+  std::lock_guard lock(state_mutex_);
+  if (const auto it = product_cache_.find(key); it != product_cache_.end()) {
+    const auto position = std::find(product_order_.begin(), product_order_.end(), key);
+    if (position != product_order_.end()) {
+      product_order_.erase(position);
+    }
+    product_order_.push_back(key);
+    return it->second;
+  }
+  if (product_loading_.contains(key)) {
+    return nullptr;
+  }
+  product_loading_.insert(key);
+  post_io([this, key, loader = std::move(loader)] {
+    auto value = loader();
+    std::lock_guard publish(state_mutex_);
+    product_cache_[key] = std::move(value);
+    product_order_.push_back(key);
+    product_loading_.erase(key);
+    while (product_order_.size() > kMaxCachedProducts) {
+      product_cache_.erase(product_order_.front());
+      product_order_.pop_front();
+    }
+  });
+  return nullptr;
+}
+
+std::shared_ptr<const SeriesListing> DataStore::field_series(const CaseRecord& record) {
+  const std::string key = fmt::format("field-series|{}|{}|{}", record.info.diag_dir.string(), record.info.h5_count,
+                                      record.info.newest_h5_mtime_s.value_or(0.0));
+  return std::static_pointer_cast<const SeriesListing>(cached(key, [diag = record.info.diag_dir] {
+    auto listing = std::make_shared<SeriesListing>();
+    listing->diag = diag;
+    try {
+      auto series = std::make_shared<io::FileSeries>(io::FileSeries::scan(diag));
+      listing->iterations = series->iterations();
+      listing->series = std::move(series);
+    } catch (const std::exception& error) {
+      listing->error = error.what();
+    }
+    return std::shared_ptr<const void>(std::move(listing));
+  }));
+}
+
+std::shared_ptr<const FieldMapResult> DataStore::field_map(const SeriesListing& listing, std::int64_t iteration) {
+  if (listing.series == nullptr ||
+      !std::binary_search(listing.iterations.begin(), listing.iterations.end(), iteration)) {
+    return nullptr;
+  }
+  const std::string key = fmt::format("field-map|{}|{}|{}", listing.diag.string(), iteration,
+                                      listing.series->file(iteration).string());
+  return std::static_pointer_cast<const FieldMapResult>(cached(key, [this, series = listing.series, iteration] {
+    auto result = std::make_shared<FieldMapResult>();
+    try {
+      const auto started = std::chrono::steady_clock::now();
+      result->map = products::load_field_map(series->file(iteration), iteration);
+      log_.add(LogLevel::Info, fmt::format("[FIELD] iteration {} in {:.2f} s", iteration, seconds_since(started)));
+    } catch (const std::exception& error) {
+      result->error = error.what();
+      log_.add(LogLevel::Warning, fmt::format("[FIELD] iteration {}: {}", iteration, error.what()));
+    }
+    return std::shared_ptr<const void>(std::move(result));
+  }));
+}
+
+std::shared_ptr<const SeriesListing> DataStore::particle_series(const CaseRecord& record,
+                                                                const std::vector<std::string>& species,
+                                                                const std::string& diag_name) {
+  // The rescan period bounds how long a new particle dump stays unnoticed.
+  const auto snapshot = campaign();
+  const std::string key =
+      fmt::format("particle-series|{}|{}|{}|{}", record.info.case_dir.string(), fmt::join(species, ","), diag_name,
+                  snapshot == nullptr ? 0 : snapshot->generation);
+  const std::string first_species = species.empty() ? std::string("electrons") : species.front();
+  return std::static_pointer_cast<const SeriesListing>(
+      cached(key, [case_dir = record.info.case_dir, first_species, diag_name] {
+        auto listing = std::make_shared<SeriesListing>();
+        try {
+          listing->diag = campaign::resolve_particle_diag_dir(case_dir, first_species, diag_name);
+          auto series = std::make_shared<io::FileSeries>(io::FileSeries::scan(listing->diag));
+          auto info = std::make_shared<io::ParticleSeriesInfo>(io::read_particle_series_info(*series));
+          listing->iterations = series->iterations();
+          listing->species = info->species.value_or(std::vector<std::string>{});
+          listing->series = std::move(series);
+          listing->particle_info = std::move(info);
+        } catch (const std::exception& failure) {
+          listing->error = failure.what();
+        }
+        return std::shared_ptr<const void>(std::move(listing));
+      }));
+}
+
+std::shared_ptr<const ParticleViewResult> DataStore::particle_views(const SeriesListing& listing,
+                                                                    const std::vector<std::string>& species,
+                                                                    std::int64_t iteration,
+                                                                    const products::ParticleViewOptions& options) {
+  if (listing.series == nullptr || listing.particle_info == nullptr) {
+    return nullptr;
+  }
+  const std::string key = fmt::format(
+      "particle-view|{}|{}|{}|{}|{}|{}|{}|{}|{}", listing.diag.string(), iteration, fmt::join(species, ","),
+      options.hot_energy_mev, physics::longitudinal_name(options.longitudinal), options.forward_only,
+      options.exit_window_mm.value_or(-1.0), options.spectrum_bins, options.phase_bins);
+  return std::static_pointer_cast<const ParticleViewResult>(cached(
+      key, [this, series = listing.series, info = listing.particle_info, species, iteration, options] {
+        auto result = std::make_shared<ParticleViewResult>();
+        try {
+          const auto started = std::chrono::steady_clock::now();
+          std::vector<io::ParticleDump> dumps;
+          for (const auto& name : species) {
+            dumps.push_back(io::read_particle_dump(*series, *info, name, iteration));
+          }
+          if (dumps.size() > 1) {
+            result->scopes.push_back(
+                products::build_particle_view(physics::concatenate_particle_dumps(dumps), "all_electrons", options));
+          }
+          for (std::size_t i = 0; i < dumps.size(); ++i) {
+            result->scopes.push_back(products::build_particle_view(dumps[i], species[i], options));
+          }
+          log_.add(LogLevel::Info, fmt::format("[PARTICLES] iteration {} ({}) in {:.2f} s", iteration,
+                                               fmt::join(species, ","), seconds_since(started)));
+        } catch (const std::exception& error) {
+          result->error = error.what();
+          log_.add(LogLevel::Warning, fmt::format("[PARTICLES] iteration {}: {}", iteration, error.what()));
+        }
+        return std::shared_ptr<const void>(std::move(result));
+      }));
+}
+
+void DataStore::write_text_async(fs::path path, std::string content) {
+  post_io([this, path = std::move(path), content = std::move(content)] {
+    try {
+      table::write_file_atomically(path, content);
+      log_.add(LogLevel::Info, fmt::format("[EXPORT] {}", path.string()));
+    } catch (const std::exception& error) {
+      log_.add(LogLevel::Error, fmt::format("[EXPORT] {}: {}", path.string(), error.what()));
+    }
+  });
 }
 
 void DataStore::reduce_cases(const std::vector<campaign::CaseInfo>& cases, const CampaignSettings& settings,

@@ -4,11 +4,14 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <chrono>
+#include <ctime>
 #include <cstdlib>
 #include <fstream>
 #include <iterator>
 #include <stdexcept>
+#include <utility>
 
 #include <fmt/format.h>
 #include <nlohmann/json.hpp>
@@ -98,6 +101,7 @@ App::App(AppOptions options) : options_(std::move(options)), store_(std::make_un
   ui_.selected_case = options_.select_case;
   ui_.selected_triplet = options_.select_triplet;
   ui_.focus_request = options_.focus_window;
+  ui_.tab_request = options_.select_tab;
 }
 
 App::~App() {
@@ -144,6 +148,67 @@ void App::rescan() {
   }
   last_poll_s_ = glfwGetTime();
   store_->request_scan(settings());
+}
+
+fs::path App::export_path(const std::string& stem, const std::string& extension) const {
+  const fs::path directory = options_.export_dir.empty() ? fs::current_path() / "guiding_gui_exports" : fs::path(options_.export_dir);
+  const auto now = std::time(nullptr);
+  std::tm local{};
+  localtime_r(&now, &local);
+  std::string safe = stem;
+  for (char& c : safe) {
+    if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-' || c == '.')) {
+      c = '_';
+    }
+  }
+  return directory / fmt::format("{}_{:04}{:02}{:02}_{:02}{:02}{:02}.{}", safe, local.tm_year + 1900, local.tm_mon + 1,
+                                 local.tm_mday, local.tm_hour, local.tm_min, local.tm_sec, extension);
+}
+
+void App::request_capture(const std::string& window) {
+  capture_window_ = window;
+  capture_path_ = export_path(window, "png");
+}
+
+// Reads the pixels of a window's rectangle from the back buffer of the frame
+// just rendered; the PNG is encoded and written on a worker thread.
+void App::capture_pending_window() {
+  if (capture_window_.empty()) {
+    return;
+  }
+  const ImGuiWindow* window = ImGui::FindWindowByName(capture_window_.c_str());
+  const std::string name = std::exchange(capture_window_, std::string());
+  if (window == nullptr || window->Hidden) {
+    store_->log().add(LogLevel::Warning, fmt::format("[EXPORT] window '{}' is not visible", name));
+    return;
+  }
+  int fb_width = 0;
+  int fb_height = 0;
+  glfwGetFramebufferSize(window_, &fb_width, &fb_height);
+  const ImVec2 scale = ImGui::GetIO().DisplayFramebufferScale;
+  const int x0 = std::clamp(static_cast<int>(window->Pos.x * scale.x), 0, fb_width);
+  const int y0 = std::clamp(static_cast<int>(window->Pos.y * scale.y), 0, fb_height);
+  const int x1 = std::clamp(static_cast<int>((window->Pos.x + window->Size.x) * scale.x), 0, fb_width);
+  const int y1 = std::clamp(static_cast<int>((window->Pos.y + window->Size.y) * scale.y), 0, fb_height);
+  const int width = x1 - x0;
+  const int height = y1 - y0;
+  if (width <= 0 || height <= 0) {
+    return;
+  }
+  std::vector<std::uint8_t> pixels(static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4);
+  glPixelStorei(GL_PACK_ALIGNMENT, 1);
+  glReadBuffer(GL_BACK);
+  glReadPixels(x0, fb_height - y1, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+  std::vector<std::uint8_t> flipped(pixels.size());
+  const std::size_t stride = static_cast<std::size_t>(width) * 4;
+  for (int y = 0; y < height; ++y) {
+    std::copy_n(pixels.data() + static_cast<std::size_t>(height - 1 - y) * stride, stride,
+                flipped.data() + static_cast<std::size_t>(y) * stride);
+  }
+  for (std::size_t i = 3; i < flipped.size(); i += 4) {
+    flipped[i] = 255;
+  }
+  store_->write_png_async(capture_path_, width, height, std::move(flipped));
 }
 
 void App::load_state() {
@@ -278,6 +343,13 @@ int App::run() {
     glClear(GL_COLOR_BUFFER_BIT);
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
+    capture_pending_window();
+    if (self_test && frame == options_.self_test_frames / 2 && !options_.capture.empty()) {
+      request_capture(options_.capture);
+    }
+    if (frame == 10) {
+      ui_.tab_request.clear();  // let the requested tab be selected once, then let the user switch
+    }
     const bool last_frame = self_test && frame + 1 >= options_.self_test_frames;
     if (last_frame && !options_.screenshot.empty()) {
       save_screenshot(options_.screenshot);
@@ -332,7 +404,8 @@ void App::self_test_step(int frame) {
     if (!snapshot->triplets.empty()) {
       ui_.selected_triplet = snapshot->triplets[step % snapshot->triplets.size()].label();
     }
-    static const std::array<const char*, 3> kViews{kCaseWindow, kTripletWindow, kOverviewWindow};
+    static const std::array<const char*, 5> kViews{kCaseWindow, kTripletWindow, kOverviewWindow, kFieldsWindow,
+                                                   kParticlesWindow};
     ui_.focus_request = kViews[step % kViews.size()];
   }
 }
@@ -371,6 +444,8 @@ void App::build_default_layout(unsigned int dockspace_id) {
   ImGui::DockBuilderDockWindow(kCaseWindow, main);
   ImGui::DockBuilderDockWindow(kTripletWindow, main);
   ImGui::DockBuilderDockWindow(kOverviewWindow, main);
+  ImGui::DockBuilderDockWindow(kFieldsWindow, main);
+  ImGui::DockBuilderDockWindow(kParticlesWindow, main);
   ImGui::DockBuilderFinish(dockspace_id);
 }
 
@@ -402,7 +477,8 @@ void App::draw_menu_bar() {
     ImGui::EndMenu();
   }
   if (ImGui::BeginMenu("View")) {
-    for (const char* name : {kCampaignWindow, kCaseWindow, kTripletWindow, kOverviewWindow, kLogWindow}) {
+    for (const char* name :
+         {kCampaignWindow, kCaseWindow, kTripletWindow, kOverviewWindow, kFieldsWindow, kParticlesWindow, kLogWindow}) {
       if (ImGui::MenuItem(name)) {
         ui_.focus_request = name;
       }
@@ -462,6 +538,8 @@ void App::draw_frame() {
   draw_case_panel(*this, ui_, *store_);
   draw_triplet_panel(ui_, *store_);
   draw_overview_panel(ui_, *store_);
+  draw_fields_panel(*this, ui_, *store_);
+  draw_particles_panel(*this, ui_, *store_);
   draw_log_panel(ui_, *store_);
 
   if (!ui_.focus_request.empty()) {

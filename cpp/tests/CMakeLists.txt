@@ -6,7 +6,8 @@ add_executable(guiding_tests
   unit/test_campaign.cpp
   unit/test_csv.cpp
   unit/test_numpy_reference.cpp
-  unit/test_particle_exit.cpp)
+  unit/test_particle_exit.cpp
+  unit/test_view_products.cpp)
 target_include_directories(guiding_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 if(TARGET guiding_gui_data)
   target_sources(guiding_tests PRIVATE unit/test_gui_data_store.cpp)

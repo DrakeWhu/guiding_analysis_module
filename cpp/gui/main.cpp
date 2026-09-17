@@ -30,7 +30,10 @@ int main(int argc, char** argv) {
   cli.add_option("--screenshot", options.screenshot, "With --self-test: save the last frame as PNG");
   cli.add_option("--select-case", options.select_case, "Case to select at start-up");
   cli.add_option("--select-triplet", options.select_triplet, "Triplet label to select at start-up");
-  cli.add_option("--focus", options.focus_window, "Window to bring to front: Campaign, Case, Triplet, Overview, Log");
+  cli.add_option("--tab", options.select_tab, "Tab to open in the views at start-up, e.g. \"Phase space\"");
+  cli.add_option("--capture", options.capture, "With --self-test: export the named window as PNG mid-run");
+  cli.add_option("--export-dir", options.export_dir, "Directory for PNG/CSV exports (default: ./guiding_gui_exports)");
+  cli.add_option("--focus", options.focus_window, "Window to bring to front: Campaign, Case, Triplet, Overview, Fields, Particles, Log");
   CLI11_PARSE(cli, argc, argv);
 
   try {

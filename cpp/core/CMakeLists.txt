@@ -13,9 +13,11 @@ add_library(guiding_core STATIC
   src/physics/soft50.cpp
   src/physics/transverse.cpp
   src/products/case_reduction.cpp
+  src/products/field_map.cpp
   src/products/particle_campaign.cpp
   src/products/particle_exit.cpp
   src/products/particle_reduction.cpp
+  src/products/particle_view.cpp
   src/products/singlecase_score.cpp
   src/products/triplet_tables.cpp
   src/table/csv.cpp

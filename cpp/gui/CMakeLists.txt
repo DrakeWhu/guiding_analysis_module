@@ -19,7 +19,7 @@ target_link_libraries(guiding_imgui PUBLIC glfw OpenGL::GL)
 set_target_properties(guiding_imgui PROPERTIES CXX_STANDARD 17)
 
 # Background loading and caching, free of any windowing code so tests can use it.
-add_library(guiding_gui_data STATIC data_store.cpp)
+add_library(guiding_gui_data STATIC data_store.cpp png_writer.cpp)
 target_include_directories(guiding_gui_data PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(guiding_gui_data PUBLIC guiding::core PRIVATE guiding::compile_options)
 
@@ -27,10 +27,11 @@ add_executable(guiding_gui
   app.cpp
   campaign_panel.cpp
   case_panel.cpp
+  fields_panel.cpp
   log_panel.cpp
   main.cpp
   overview_panel.cpp
-  png_writer.cpp
+  particles_panel.cpp
   triplet_panel.cpp
   widgets.cpp)
 target_link_libraries(guiding_gui PRIVATE guiding_gui_data guiding_imgui CLI11::CLI11 nlohmann_json::nlohmann_json

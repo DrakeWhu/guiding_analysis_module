@@ -131,7 +131,7 @@ void draw_triplet_panel(UiState& ui, DataStore& store) {
 
   const bool has_a0 = !data->column("a0_peak_channel").empty();
   if (ImGui::BeginTabBar("##triplet_tabs")) {
-    if (ImGui::BeginTabItem("Comparison")) {
+    if (ImGui::BeginTabItem("Comparison", nullptr, widgets::tab_flags(ui, "Comparison"))) {
       std::vector<PlotDef> plots{{"Optical confinement", "waist RMS [um]", "waist_um_", false},
                                  {"Peak intensity", "peak I / first dump", "peak_I_norm_", false},
                                  {"Laser energy", "energy / first dump", "energy_norm_", false},
@@ -143,7 +143,7 @@ void draw_triplet_panel(UiState& ui, DataStore& store) {
       draw_grid("##comparison", *data, plots, has_a0 ? 3 : 2, 2);
       ImGui::EndTabItem();
     }
-    if (ImGui::BeginTabItem("Ratios")) {
+    if (ImGui::BeginTabItem("Ratios", nullptr, widgets::tab_flags(ui, "Ratios"))) {
       std::vector<PlotDef> plots{{"Waist ratios (lower = stronger confinement)", "waist ratio", "waist_", true},
                                  {"Peak-intensity ratios", "peak I ratio", "peakI_", true},
                                  {"Energy-proxy ratios", "energy proxy ratio", "energy_", true},
@@ -154,7 +154,7 @@ void draw_triplet_panel(UiState& ui, DataStore& store) {
       draw_grid("##ratios", *data, plots, has_a0 ? 3 : 2, 2);
       ImGui::EndTabItem();
     }
-    if (ImGui::BeginTabItem("Late window")) {
+    if (ImGui::BeginTabItem("Late window", nullptr, widgets::tab_flags(ui, "Late window"))) {
       if (data->late_window_mm) {
         ImGui::TextDisabled("late window %.3f - %.3f mm (late fraction %.3f)", data->late_window_mm->first,
                             data->late_window_mm->second, snapshot->settings.late_fraction);
@@ -165,7 +165,7 @@ void draw_triplet_panel(UiState& ui, DataStore& store) {
       widgets::frame_table("##late_ratios", data->tables.late_ratios);
       ImGui::EndTabItem();
     }
-    if (ImGui::BeginTabItem("Wide table")) {
+    if (ImGui::BeginTabItem("Wide table", nullptr, widgets::tab_flags(ui, "Wide table"))) {
       widgets::frame_table("##wide", data->tables.wide);
       ImGui::EndTabItem();
     }

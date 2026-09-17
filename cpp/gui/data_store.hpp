@@ -10,6 +10,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <stop_token>
 #include <string>
 #include <string_view>
@@ -18,6 +19,10 @@
 #include <vector>
 
 #include "guiding/campaign/discovery.hpp"
+#include "guiding/io/openpmd_series.hpp"
+#include "guiding/io/particle_reader.hpp"
+#include "guiding/products/field_map.hpp"
+#include "guiding/products/particle_view.hpp"
 #include "guiding/products/triplet_tables.hpp"
 #include "guiding/table/csv.hpp"
 
@@ -131,6 +136,29 @@ struct TripletData {
   [[nodiscard]] std::vector<double> column(std::string_view name) const;
 };
 
+// Iterations (and particle species) of one openPMD series.
+struct SeriesListing {
+  std::filesystem::path diag;
+  std::vector<std::int64_t> iterations;
+  std::vector<std::string> species;
+  // Scanned once (opening every file) and shared by the loads that use it.
+  std::shared_ptr<const io::FileSeries> series;
+  std::shared_ptr<const io::ParticleSeriesInfo> particle_info;
+  std::string error;
+};
+
+struct FieldMapResult {
+  products::FieldMap map;
+  std::string error;
+};
+
+// One dump analysed for every scope: all_electrons first when several species
+// are requested, then each species.
+struct ParticleViewResult {
+  std::vector<products::ParticleView> scopes;
+  std::string error;
+};
+
 struct JobStatus {
   std::string name;
   bool running = false;
@@ -158,6 +186,24 @@ class DataStore {
   [[nodiscard]] std::shared_ptr<const TripletData> triplet(const CampaignSnapshot& snapshot,
                                                            const campaign::TripletInfo& triplet);
 
+  // Field diagnostic of a case: iterations, and the intensity map of one dump.
+  [[nodiscard]] std::shared_ptr<const SeriesListing> field_series(const CaseRecord& record);
+  [[nodiscard]] std::shared_ptr<const FieldMapResult> field_map(const SeriesListing& series, std::int64_t iteration);
+
+  // Particle diagnostic of a case, resolved like diagnostics.resolve_particle_diag_dir
+  // from the first species and the directory name ("auto" for the candidates).
+  [[nodiscard]] std::shared_ptr<const SeriesListing> particle_series(const CaseRecord& record,
+                                                                     const std::vector<std::string>& species,
+                                                                     const std::string& diag_name);
+  [[nodiscard]] std::shared_ptr<const ParticleViewResult> particle_views(const SeriesListing& series,
+                                                                         const std::vector<std::string>& species,
+                                                                         std::int64_t iteration,
+                                                                         const products::ParticleViewOptions& options);
+
+  // Writes a small export file off the UI thread and logs the result.
+  void write_text_async(std::filesystem::path path, std::string content);
+  void write_png_async(std::filesystem::path path, int width, int height, std::vector<std::uint8_t> rgba);
+
   // Field reduction of the given cases into case_metrics_root (one case at a
   // time, each using all worker threads), then a rescan.
   void reduce_cases(const std::vector<campaign::CaseInfo>& cases, const CampaignSettings& settings, bool overwrite);
@@ -173,6 +219,9 @@ class DataStore {
   void worker_loop(std::stop_token stop, std::deque<Task>& queue);
   void start_scan(CampaignSettings settings);
   void wake();
+  // Keyed cache for derived products; nullptr while loading. Keys encode
+  // everything the value depends on, so stale entries are simply not asked for.
+  std::shared_ptr<const void> cached(const std::string& key, std::function<std::shared_ptr<const void>()> loader);
 
   LogBuffer log_;
   std::function<void()> wake_;
@@ -193,6 +242,9 @@ class DataStore {
   std::map<std::string, FileStamp> case_loading_;
   std::map<std::string, std::shared_ptr<const TripletData>> triplet_cache_;
   std::map<std::string, std::vector<FileStamp>> triplet_loading_;
+  std::map<std::string, std::shared_ptr<const void>> product_cache_;
+  std::deque<std::string> product_order_;  // least recently used first
+  std::set<std::string> product_loading_;
   std::map<std::uint64_t, JobStatus> jobs_;
   std::uint64_t next_job_id_ = 1;
 

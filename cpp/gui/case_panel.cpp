@@ -208,15 +208,15 @@ void draw_case_panel(App& app, UiState& ui, DataStore& store) {
                                             : "no tentative breakdown");
 
   if (ImGui::BeginTabBar("##case_tabs")) {
-    if (ImGui::BeginTabItem("Summary")) {
+    if (ImGui::BeginTabItem("Summary", nullptr, widgets::tab_flags(ui, "Summary"))) {
       draw_summary_plots(*metrics, color);
       ImGui::EndTabItem();
     }
-    if (ImGui::BeginTabItem("Single-case score")) {
+    if (ImGui::BeginTabItem("Single-case score", nullptr, widgets::tab_flags(ui, "Single-case score"))) {
       draw_singlecase(*metrics);
       ImGui::EndTabItem();
     }
-    if (ImGui::BeginTabItem("Data")) {
+    if (ImGui::BeginTabItem("Data", nullptr, widgets::tab_flags(ui, "Data"))) {
       draw_data_table(*metrics);
       ImGui::EndTabItem();
     }

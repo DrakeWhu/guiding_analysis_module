@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <iterator>
 #include <limits>
 #include <vector>
 
@@ -91,6 +92,98 @@ void line_series(const char* label, std::span<const double> x, std::span<const d
     spec.MarkerFillColor = color;
   }
   ImPlot::PlotLine(label, x.data(), y.data(), count, spec);
+}
+
+std::string columns_csv(std::initializer_list<std::pair<const char*, std::span<const double>>> columns) {
+  std::string out;
+  std::size_t rows = 0;
+  for (const auto& [name, values] : columns) {
+    out += (out.empty() ? "" : ",") + std::string(name);
+    rows = std::max(rows, values.size());
+  }
+  out += '\n';
+  for (std::size_t r = 0; r < rows; ++r) {
+    bool first = true;
+    for (const auto& [name, values] : columns) {
+      if (!first) {
+        out += ',';
+      }
+      first = false;
+      if (r < values.size()) {
+        fmt::format_to(std::back_inserter(out), "{}", values[r]);
+      }
+    }
+    out += '\n';
+  }
+  return out;
+}
+
+ImGuiTabItemFlags tab_flags(const UiState& ui, const char* name) {
+  return ui.tab_request == name ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
+}
+
+bool export_buttons(App& app, const char* window, bool csv_available) {
+  const ImGuiStyle& style = ImGui::GetStyle();
+  const float width = ImGui::CalcTextSize("PNG").x + ImGui::CalcTextSize("CSV").x + 4 * style.FramePadding.x +
+                      style.ItemSpacing.x;
+  ImGui::SameLine(std::max(ImGui::GetCursorPosX(), ImGui::GetWindowContentRegionMax().x - width));
+  if (ImGui::Button("PNG")) {
+    app.request_capture(window);
+  }
+  if (ImGui::IsItemHovered()) {
+    ImGui::SetTooltip("Save this window as PNG");
+  }
+  ImGui::SameLine();
+  ImGui::BeginDisabled(!csv_available);
+  const bool csv = ImGui::Button("CSV");
+  ImGui::EndDisabled();
+  if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+    ImGui::SetTooltip("Save the plotted data as CSV");
+  }
+  return csv;
+}
+
+std::int64_t iteration_selector(const char* id, std::span<const std::int64_t> iterations, std::int64_t& selected,
+                                bool& follow_latest) {
+  if (iterations.empty()) {
+    ImGui::TextDisabled("no dumps");
+    return -1;
+  }
+  auto position = std::lower_bound(iterations.begin(), iterations.end(), selected);
+  if (follow_latest || position == iterations.end() || *position != selected) {
+    position = follow_latest || position == iterations.end() ? iterations.end() - 1 : position;
+    selected = *position;
+  }
+  int index = static_cast<int>(position - iterations.begin());
+  ImGui::PushID(id);
+  ImGui::AlignTextToFramePadding();
+  ImGui::TextUnformatted("iteration");
+  ImGui::SameLine();
+  if (ImGui::ArrowButton("##previous", ImGuiDir_Left) && index > 0) {
+    --index;
+    follow_latest = false;
+  }
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(160.0f);
+  const std::string preview = std::to_string(iterations[static_cast<std::size_t>(index)]);
+  if (ImGui::SliderInt("##index", &index, 0, static_cast<int>(iterations.size()) - 1, preview.c_str())) {
+    follow_latest = false;
+  }
+  ImGui::SameLine();
+  if (ImGui::ArrowButton("##next", ImGuiDir_Right) && index + 1 < static_cast<int>(iterations.size())) {
+    ++index;
+    follow_latest = false;
+  }
+  ImGui::SameLine();
+  ImGui::Checkbox("latest", &follow_latest);
+  ImGui::SameLine();
+  ImGui::TextDisabled("(%zu dumps)", iterations.size());
+  ImGui::PopID();
+  selected = iterations[static_cast<std::size_t>(std::clamp(index, 0, static_cast<int>(iterations.size()) - 1))];
+  if (follow_latest) {
+    selected = iterations.back();
+  }
+  return selected;
 }
 
 std::pair<double, double> padded_range(std::span<const double> values) {
