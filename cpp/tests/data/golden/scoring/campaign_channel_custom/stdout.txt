@@ -1,0 +1,18 @@
+=== Guiding score summary ===
+campaign_root     = synthetic/scoring/campaign
+case_metrics_root = synthetic/scoring/case_metrics
+outdir            = golden/scoring/campaign_channel_custom
+case_type         = channel
+cases scored      = 13
+ok scores         = 11
+failed scores     = 2
+case_scores       = golden/scoring/campaign_channel_custom/case_scores.csv
+top_cases         = golden/scoring/campaign_channel_custom/top_cases.csv
+
+Top 5 cases:
+ rank      score                                        case_id  a0_exit  a0_exit_over_analysis_max  waist_growth  waist_jitter_log  valid_fraction plateau diameter  focus
+    1 105.968850    020_f20_chan_n4e18cm3_L4mm_d150um_foc0um_rz 1.409898                   0.975904      1.075926          0.112701             1.0       4      150    0um
+    2 100.347729    001_f20_chan_n4e18cm3_L2mm_d150um_foc0um_rz 1.329196                   0.920239      1.166880          0.094518             1.0       2      150    0um
+    3  99.261005 006_f20_chan_n4e18cm3_L2mm_d150um_focm200um_rz 1.303113                   0.920243      1.166880          0.094518             1.0       2      150 m200um
+    4  95.316860    011_f20_chan_n4e18cm3_L3mm_d150um_foc0um_rz 1.289232                   0.892382      1.248734          0.113552             1.0       3      150    0um
+    5  94.218984 016_f20_chan_n4e18cm3_L3mm_d150um_focm200um_rz 1.263148                   0.891828      1.248734          0.113552             1.0       3      150 m200um

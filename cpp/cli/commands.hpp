@@ -19,6 +19,7 @@ Command add_case_command(CLI::App& app);
 Command add_campaign_command(CLI::App& app);
 Command add_triplet_command(CLI::App& app);
 Command add_inspect_command(CLI::App& app);
+Command add_score_command(CLI::App& app);
 Command add_particles_command(CLI::App& app);
 Command add_particles_campaign_command(CLI::App& app);
 

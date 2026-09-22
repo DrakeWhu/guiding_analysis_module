@@ -198,7 +198,34 @@ z_Ez_absmax_rel_um,propagation_mm,z_peak_relative_um
   - The particle dump is the first minimum of `|it − target_it|`, so ties go to the earlier dump.
 - **Case directory:** `DIAG/../..` when DIAG's parent is named `diags`, else `OUTDIR/..`. Both are lexical, as in pathlib.
 
-## 6. CSV text
+## 7. Scoring layers (`scoring.py`, `beamlike_pairs.py`, `joint_scores.py`)
+
+These consume reduced CSVs only, so they are pure table-to-table transforms.
+
+**Guiding score v2** (`score_case_csv`, over `guiding_metrics.csv`):
+- Windows around the plateau `(start, end)` inferred from the CSV path: entry `[start, start+1]`, exit `[end−1, end+2]`, analysis `[start, end+2]` mm (configurable).
+- `a0_exit`, `waist_entry_um`, `waist_exit_um` are medians of the finite values in their window; `a0_max_analysis` is the first `nanargmax`; `waist_jitter_log` is `std(log waist)` over finite positive values (ddof = 0, at least 2 of them).
+- `valid_fraction` is the share of analysis rows with finite a0 and waist.
+- Components: `clip(a0_exit/target, 0, cap)`, `clip(a0_exit/a0_max, 0, 1)`, `exp(−(max(0, growth−1)/σ)²)`, `exp(−(jitter/σ)²)`; `score = 100·Σwᵢcᵢ·valid_fraction` with weights .50/.20/.20/.10.
+- Every failure is a row with `status = "failed"` and a reason (`missing_csv`, `empty_csv`, `missing_columns: [...]`, `could_not_infer_plateau_window`, `empty_*_window`, `non_finite_score_metric`, `non_positive_reference_metric`), never an exception.
+
+**Triplet score** (`score_triplet_csvs`): the channel score times a reference factor.
+- The reference is the case with the larger `a0_exit` (uniform wins ties).
+- Row-wise mode: over the iterations common to all three cases inside the exit window, the medians of `log(a0_channel/a0_reference)` and `log(waist_reference/waist_channel)`. Without common iterations it falls back to the per-case exit medians, recording `reference_factor_mode = "exit_median_fallback"` and the reason.
+- `combined = 0.8·a0 + 0.2·waist`, clamped down to the a0 advantage when the channel loses a0 beyond the deadband, then `tanh(deadband(combined)/scale)` with `deadband = log 1.05` and `scale = log 1.5`.
+
+**Beamlike pairs** (channel vs uniform `particle_summary.csv`):
+- Row selection `single` (strict), `last` (largest `iteration`) or `max-beamlike`; ties take the last row.
+- Summaries without `beamlike_score` get the beamlike columns recomputed (`beamlike_score_source = "computed_on_the_fly"`).
+- `log((score_channel + floor)/(score_uniform + floor))` → `tanh` of the deadbanded advantage → `gain = max(channel, uniform)·factor`; the transverse-quality comparison repeats this on `beam_transverse_quality_score` and keeps its own bucket.
+- Buckets: positive / neutral / negative by the sign of the factor, failed otherwise. Files are `csv.DictWriter` with LF rows, the preferred column order first.
+
+**Joint** (`joint_scores.py`): the triplet scores joined with the pair scores on `(channel_case_id, uniform_case_id)`, columns prefixed `guiding_`/`beam_`.
+- `joint_bucket` and `triple_bucket` combine the guiding, beam and transverse buckets; `joint_positive_score = sqrt(guiding_final·beam_gain)` and `triple_positive_score = (guiding_final·beam_gain·transverse_gain)^(1/3)` over values floored at 0.
+- Correlations use `np.corrcoef` (Pearson) and `scipy.stats.spearmanr` (average ranks) on the rows where both values are finite, needing at least 3.
+- `pandas.merge` ordering for unique keys: inner and left keep the left order, right keeps the right order, outer sorts the keys. `value_counts` sorts by count, keeping first-appearance order for ties.
+
+## 8. CSV text
 
 | Writer | Line end | Float | NaN | bool | None |
 |---|---|---|---|---|---|
@@ -208,10 +235,12 @@ z_Ez_absmax_rel_um,propagation_mm,z_peak_relative_um
 - **Python `repr`:** shortest round-trip digits. It uses exponent notation when `decpt <= −4` or `decpt > 16`, e.g. `1e-05`, `1e+16`, `1000000000000000.0`.
 - **Quoting:** `QUOTE_MINIMAL`, which quotes fields containing `,`, `"`, `\r` or `\n`, plus a lone empty field.
 
-## 7. Compatibility quirks (kept on purpose)
+## 9. Compatibility quirks (kept on purpose)
 
 - **Plateau-token separators:** `case_metadata._PLATEAU_TOKEN_RE` accepts `\`, `/`, `s`, `S`, `_` and `-` around `L<x>mm`. It does not accept whitespace, because `\\s` in a raw string is a literal `s`. A `P` fraction separator (`L2P5mm`) raises `ValueError`.
 - **HDF5 counting:** readiness counts `*.h5` recursively, while the series listing only reads top-level `*.h5`/`*.hdf5` files.
 - **Duplicate iterations:** if two files carry the same iteration, the later one wins. C++ sorts filenames to make "later" deterministic; Python uses `os.listdir` order.
 - **Multi-species campaign directory:** `analyze_particle_campaign.py` resolves the particle diagnostic directory from the raw `--species` text. With `a,b`, it looks for `diags/a,b`, unless `--particle-diag-name` is given.
+- **numpy's vectorized tanh:** `np.tanh` uses numpy's own AVX2 kernel, which differs from libm by up to 1 ULP, so `reference_factor` (and `final_score`) in the triplet scores are compared with a 1e-12 tolerance instead of bit for bit. `math.tanh` in `beamlike_pairs.py` is libm and stays exact.
+- **Correlations:** `np.corrcoef` sums through BLAS, whose blocking the C++ port does not reproduce; `pearson` and `spearman` are compared with a 1e-12 tolerance.
 - **Missing meshes group:** `describe_series` calls `list(None)` when a particle series has no meshes group, so Python fails. C++ prints `'avail_fields': []` and continues.

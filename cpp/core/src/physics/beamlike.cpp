@@ -9,6 +9,7 @@
 
 #include "guiding/numeric/npcompat.hpp"
 #include "guiding/table/csv.hpp"
+#include "guiding/table/py_format.hpp"
 
 namespace guiding::physics {
 namespace {
@@ -83,7 +84,7 @@ double finite_float(const table::Record& row, const std::string& key) {
     } else if (const auto* flag = std::get_if<bool>(&*cell)) {
       value = *flag ? 1.0 : 0.0;
     } else if (const auto* text = std::get_if<std::string>(&*cell)) {
-      value = table::parse_number(*text).value_or(kNaN);
+      value = table::parse_py_float(*text).value_or(kNaN);
     }
   }
   return std::isfinite(value) ? value : kNaN;

@@ -9,6 +9,9 @@ Outputs land in cpp/tests/data/golden/:
   particles/runs.json (CSV products and stdout; plots are deleted)
 - particles/campaign/: scripts/analyze_particle_campaign.py on a copy of the
   synthetic campaign (per-case CSV products and stdout)
+- scoring/<run>/: score_campaign, score_triplets, score_beamlike_pairs and
+  compare_guiding_beamlike_scores on synthetic/scoring (make_scoring_fixtures.py),
+  run from cpp/tests/data so recorded paths are relative to it
 metadata.json records the reference commit and library versions.
 """
 from __future__ import annotations
@@ -30,15 +33,16 @@ def rel(path: Path) -> str:
     return str(path.relative_to(REPO))
 
 
-def run_reference(*args: str, check: bool = True) -> str:
+def run_reference(*args: str, check: bool = True, cwd: Path = REPO) -> str:
     result = subprocess.run(
         [sys.executable, *args],
-        cwd=REPO,
+        cwd=cwd,
         check=check,
         capture_output=True,
         text=True,
         # Unbuffered so parent and child-process lines keep their real order.
-        env={**os.environ, "MPLBACKEND": "Agg", "PYTHONUNBUFFERED": "1", "PYTHONPATH": str(REPO)},
+        env={**os.environ, "MPLBACKEND": "Agg", "PYTHONUNBUFFERED": "1", "PYTHONPATH": str(REPO),
+             "PYTHONWARNINGS": "ignore"},
     )
     return result.stdout
 
@@ -121,6 +125,51 @@ def particle_run_arguments(run: dict) -> list[str]:
         else:
             arguments += [f"--{flag}", str(value)]
     return arguments
+
+
+SCORING_CAMPAIGN = ["--campaign-root", "synthetic/scoring/campaign", "--case-metrics-root", "synthetic/scoring/case_metrics"]
+
+# Script runs of the scoring layers; options are passed verbatim (paths relative
+# to cpp/tests/data) and read back by the C++ parity test from runs.json.
+SCORING_RUNS = [
+    {"name": "campaign_all", "script": "score_campaign", "options": {"case-type": "all", "top": 10}},
+    {
+        "name": "campaign_channel_custom",
+        "script": "score_campaign",
+        "options": {"case-type": "channel", "top": 5, "a0-target": 1.2, "exit-after-mm": 1.5,
+                    "waist-growth-sigma": 0.5, "entry-window-mm": 0.75},
+    },
+    {"name": "triplets", "script": "score_triplets", "options": {"top": 5}},
+    {"name": "beamlike_last", "script": "score_beamlike_pairs", "options": {"row-selection": "last", "top": 3}},
+    {"name": "beamlike_single", "script": "score_beamlike_pairs", "options": {"score-floor": 2.0}},
+    {
+        "name": "joint_inner",
+        "script": "compare_guiding_beamlike_scores",
+        "options": {"triplet-scores-csv": "golden/scoring/triplets/triplet_scores.csv",
+                    "beamlike-pair-scores-csv": "golden/scoring/beamlike_last/beamlike_pair_scores.csv"},
+    },
+    {
+        "name": "joint_outer",
+        "script": "compare_guiding_beamlike_scores",
+        "options": {"triplet-scores-csv": "golden/scoring/triplets/triplet_scores.csv",
+                    "beamlike-pair-scores-csv": "golden/scoring/beamlike_single/beamlike_pair_scores.csv",
+                    "join-how": "outer", "top": 2},
+    },
+]
+
+
+def generate_scoring_goldens(golden: Path) -> None:
+    scoring = golden / "scoring"
+    shutil.rmtree(scoring, ignore_errors=True)
+    scoring.mkdir(parents=True)
+    (scoring / "runs.json").write_text(json.dumps(SCORING_RUNS, indent=2) + "\n")
+    for run in SCORING_RUNS:
+        outdir = f"golden/scoring/{run['name']}"
+        arguments = [] if run["script"] == "compare_guiding_beamlike_scores" else list(SCORING_CAMPAIGN)
+        for flag, value in run["options"].items():
+            arguments += [f"--{flag}", str(value)]
+        stdout = run_reference(str(REPO / "scripts" / f"{run['script']}.py"), *arguments, "--outdir", outdir, cwd=DATA)
+        (DATA / outdir / "stdout.txt").write_text(stdout)
 
 
 def generate_particle_goldens(golden: Path) -> None:
@@ -212,6 +261,7 @@ def main() -> None:
     (campaign_out / "stdout.txt").write_text(stdout)
 
     generate_particle_goldens(golden)
+    generate_scoring_goldens(golden)
 
     metadata = {
         "generator": "tools/golden/generate_golden.py",
