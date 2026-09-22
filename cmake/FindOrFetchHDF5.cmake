@@ -5,10 +5,17 @@
 # needs MPI::MPI_C because its public headers include mpi.h; the reader itself
 # stays serial.
 
-if(GUIDING_FETCH_HDF5)
-  find_package(HDF5 QUIET COMPONENTS C)
-else()
-  find_package(HDF5 REQUIRED COMPONENTS C)
+find_package(HDF5 QUIET COMPONENTS C)
+
+if(NOT HDF5_FOUND AND NOT GUIDING_FETCH_HDF5)
+  message(FATAL_ERROR
+    "HDF5 (C library) was not found, and it is the only dependency this project does not fetch.\n"
+    "Pick one:\n"
+    "  * install it:        sudo apt install libhdf5-dev   (Debian/Ubuntu)\n"
+    "                       brew install hdf5              (macOS)\n"
+    "  * point at a copy:   cmake -S . -B build/release -DHDF5_ROOT=/path/to/hdf5\n"
+    "                       (HPC: module load HDF5, then -DHDF5_ROOT=\$ENV{EBROOTHDF5} or \$HDF5_DIR)\n"
+    "  * build it here:     cmake -S . -B build/release -DGUIDING_FETCH_HDF5=ON   (a few minutes)")
 endif()
 
 add_library(guiding_hdf5 INTERFACE)

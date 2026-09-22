@@ -554,8 +554,13 @@ std::vector<JointOutput> write_joint_outputs(const fs::path& outdir, const Frame
     table::write_file_atomically(path_of(key), frame_csv(frame));
   };
   if (joined.row_count() == 0) {
-    for (std::size_t i = 5; i < paths.size(); ++i) {
-      table::write_file_atomically(paths[i].path, frame_csv(joined.take(std::vector<std::size_t>{})));
+    // joined.head(0): every subset keeps the header of an empty join.
+    const Frame header_only = joined.take(std::vector<std::size_t>{});
+    for (const auto& output : paths) {
+      if (output.key != "joined" && output.key != "joined_triple" && output.key != "bucket_counts" &&
+          output.key != "triple_bucket_counts" && output.key != "correlations") {
+        table::write_file_atomically(output.path, frame_csv(header_only));
+      }
     }
     return paths;
   }

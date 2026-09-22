@@ -359,14 +359,11 @@ Record compare_beamlike_pair_csvs(const fs::path& channel_csv, const fs::path& u
     return failure(fmt::format("missing_columns: {}", table::python_list_repr(missing)));
   }
 
+  // Older summaries have no beamlike columns: compute them without touching the CSV.
   const auto ensure = [](const Record& row) -> std::pair<Record, std::string> {
     const auto score = row.get("beamlike_score");
-    std::string text = score ? py_str(*score) : std::string();
-    if (std::holds_alternative<std::monostate>(score.value_or(Cell{std::string()}))) {
-      text = "None";
-    }
-    const auto first = text.find_first_not_of(" \t\n\r\v\f");
-    if (first != std::string::npos) {
+    const std::string text = score ? py_str(*score) : std::string();
+    if (!lower_stripped(text).empty()) {
       return {row, "particle_summary"};
     }
     return {physics::add_beamlike_metrics(row), "computed_on_the_fly"};

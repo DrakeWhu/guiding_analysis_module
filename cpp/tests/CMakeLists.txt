@@ -2,6 +2,7 @@ add_executable(guiding_tests
   parity/test_campaign_parity.cpp
   parity/test_field_parity.cpp
   parity/test_particle_parity.cpp
+  parity/test_real_data.cpp
   parity/test_scoring_parity.cpp
   support/table_compare.cpp
   unit/test_campaign.cpp

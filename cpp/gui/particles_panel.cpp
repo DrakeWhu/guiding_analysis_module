@@ -93,19 +93,21 @@ void draw_spectrum_and_acceptance(const products::ParticleView& view, UiState& u
     for (double t : view.theta_cuts_mrad) {
       theta_labels.push_back(fmt::format("<={:g}", t));
     }
-    std::vector<const char*> energy_ptrs;
-    std::vector<const char*> theta_ptrs;
-    for (const auto& label : energy_labels) {
-      energy_ptrs.push_back(label.c_str());
-    }
+    const auto c_strings = [](const std::vector<std::string>& labels) {
+      std::vector<const char*> pointers;
+      pointers.reserve(labels.size());
+      for (const auto& label : labels) {
+        pointers.push_back(label.c_str());
+      }
+      return pointers;
+    };
+    const auto energy_ptrs = c_strings(energy_labels);
+    const auto theta_ptrs = c_strings(theta_labels);
     // Heatmap row 0 is drawn at the top: largest theta cut first.
     std::vector<double> grid(view.accepted_pC.size());
     for (std::size_t t = 0; t < n_theta; ++t) {
       std::copy_n(view.accepted_pC.begin() + static_cast<std::ptrdiff_t>((n_theta - 1 - t) * n_energy), n_energy,
                   grid.begin() + static_cast<std::ptrdiff_t>(t * n_energy));
-    }
-    for (std::size_t t = 0; t < n_theta; ++t) {
-      theta_ptrs.push_back(theta_labels[t].c_str());
     }
     ImPlot::SetupAxes("E_min [MeV]", "theta_r cut [mrad]", ImPlotAxisFlags_NoGridLines, ImPlotAxisFlags_NoGridLines);
     ImPlot::SetupAxesLimits(0.0, static_cast<double>(n_energy), 0.0, static_cast<double>(n_theta), ImPlotCond_Always);
