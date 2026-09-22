@@ -189,10 +189,11 @@ table::Record summarize_soft50_metrics(const io::ParticleDump& dump, std::span<c
   row.set("energy_mean_soft50_MeV", energy_mean);
   row.set("energy_spread_rms_soft50_MeV", energy_spread_rms);
   row.set("energy_relative_spread_rms_soft50", energy_mean > 0.0 ? energy_spread_rms / energy_mean : kNaN);
-  row.set("energy_p10_soft50_MeV", weighted_percentile(energy, soft_weights, 10.0));
-  row.set("energy_p50_soft50_MeV", weighted_percentile(energy, soft_weights, 50.0));
-  row.set("energy_p90_soft50_MeV", weighted_percentile(energy, soft_weights, 90.0));
-  row.set("energy_p95_soft50_MeV", weighted_percentile(energy, soft_weights, 95.0));
+  const WeightedSample energy_sample(energy, soft_weights);
+  row.set("energy_p10_soft50_MeV", energy_sample.percentile(10.0));
+  row.set("energy_p50_soft50_MeV", energy_sample.percentile(50.0));
+  row.set("energy_p90_soft50_MeV", energy_sample.percentile(90.0));
+  row.set("energy_p95_soft50_MeV", energy_sample.percentile(95.0));
 
   if (longitudinal != Longitudinal::Z) {
     set_nan(row, {"theta_r_p90_soft50_mrad", "theta_r_p95_soft50_mrad", "emitn_x_soft50_um_rad",
@@ -228,8 +229,9 @@ table::Record summarize_soft50_metrics(const io::ParticleDump& dump, std::span<c
   }
   const double emit_x = normalized_emittance_um_rad(x, ux, w);
   const double emit_y = normalized_emittance_um_rad(y, uy, w);
-  row.set("theta_r_p90_soft50_mrad", weighted_percentile(theta_r_mrad, w, 90.0));
-  row.set("theta_r_p95_soft50_mrad", weighted_percentile(theta_r_mrad, w, 95.0));
+  const WeightedSample theta_sample(theta_r_mrad, w);
+  row.set("theta_r_p90_soft50_mrad", theta_sample.percentile(90.0));
+  row.set("theta_r_p95_soft50_mrad", theta_sample.percentile(95.0));
   row.set("emitn_x_soft50_um_rad", emit_x);
   row.set("emitn_y_soft50_um_rad", emit_y);
   row.set("emitn_xy_soft50_um_rad", std::sqrt(at_least_zero(emit_x) * at_least_zero(emit_y)));

@@ -442,6 +442,137 @@ done < "$ROOT/analysis_outputs/cleanup_safe_not_running.txt" | wc -l
 du -sh "$ROOT"
 ```
 
+## C++ tools: guiding_cli and guiding_gui
+
+The Python pipeline above remains the reference. The same reductions are also
+available as a C++20 library (`libguiding_core`) with two front ends:
+
+- **`guiding_cli`** — headless, no GL or X11, SLURM friendly. It reproduces
+  `analyze_case.py`, `analyze_campaign.py`, `analyze_particle_case.py`,
+  `analyze_particle_campaign.py`, `compare_triplet.py` and the `score_*.py`
+  scripts, writing the same CSV files.
+- **`guiding_gui`** — a Dear ImGui/ImPlot dashboard for browsing a campaign
+  while it runs: readiness, case and triplet plots, field maps, particle
+  spectra and phase spaces, with background loading and a polling refresh.
+
+The C++ products are byte-identical to the Python ones, with the documented
+exceptions in `docs/SPEC.md` (§8). `docs/SPEC.md` is the numerical contract:
+openPMD read semantics, the reduction formulas and the CSV text rules.
+
+### Build
+
+```bash
+sudo apt install build-essential cmake ninja-build libhdf5-dev libgl-dev \
+    libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev \
+    libwayland-dev libxkbcommon-dev          # GL/X11 packages: only for the GUI
+
+cmake -S . -B build/release -DCMAKE_BUILD_TYPE=RelWithDebInfo
+cmake --build build/release -j
+ctest --test-dir build/release --output-on-failure
+```
+
+Everything except HDF5 (fmt, fast_float, CLI11, Catch2, GLFW, Dear ImGui,
+ImPlot, nlohmann/json) is fetched and hash-checked by CMake, or taken from an
+installed copy when one is found.
+
+| Option | Default | Purpose |
+|---|---|---|
+| `GUIDING_BUILD_CLI` / `GUIDING_BUILD_GUI` / `GUIDING_BUILD_TESTS` | ON | Components to build |
+| `GUIDING_FETCH_HDF5` | OFF | Build HDF5 1.14 from source instead of using a system/module copy |
+| `GUIDING_NATIVE_ARCH` | OFF | `-march=native` |
+| `GUIDING_LTO` | OFF | Link-time optimisation |
+| `GUIDING_SANITIZE` | "" | e.g. `address;undefined` or `thread` |
+| `HDF5_ROOT` | | Where to find HDF5 (an HPC module, or a local build) |
+
+On SUNRISE (GCC 12.1, no GUI):
+
+```bash
+module load GCC/12.1.0 CMake HDF5
+cmake -S . -B build/hpc -DCMAKE_BUILD_TYPE=Release -DGUIDING_BUILD_GUI=OFF \
+      -DHDF5_ROOT="$EBROOTHDF5"
+cmake --build build/hpc -j
+```
+
+Without an HDF5 module, add `-DGUIDING_FETCH_HDF5=ON`. On macOS use Homebrew
+(`brew install cmake hdf5`); on Windows use vcpkg with MSVC 2022. Offline
+builds work with `FETCHCONTENT_SOURCE_DIR_<DEP>` or
+`FETCHCONTENT_FULLY_DISCONNECTED=ON`.
+
+### Command mapping
+
+| Python script | guiding_cli |
+|---|---|
+| `analyze_case.py` | `guiding_cli case --diag DIAG --outdir DIR` |
+| `analyze_campaign.py` | `guiding_cli campaign --campaign-root ROOT [--run-cases --run-triplets]` |
+| `compare_triplet.py` | `guiding_cli triplet --channel A --uniform B --vacuum C` |
+| `analyze_particle_case.py` | `guiding_cli particles --diag DIAG --outdir DIR` |
+| `analyze_particle_campaign.py` | `guiding_cli particles-campaign --campaign-root ROOT` |
+| `score_campaign.py` | `guiding_cli score campaign --campaign-root ROOT` |
+| `score_triplets.py` | `guiding_cli score triplets --campaign-root ROOT` |
+| `score_beamlike_pairs.py` | `guiding_cli score beamlike-pairs --campaign-root ROOT` |
+| `compare_guiding_beamlike_scores.py` | `guiding_cli score joint --campaign-root ROOT` |
+| (new) | `guiding_cli inspect --diag DIAG` prints the series layout as JSON |
+
+The flags keep their Python names and the log vocabulary
+(`[OK]`, `[SKIP]`, `[FAIL]`, `[MAKE]`, `[USE]`), so existing SUNRISE command
+lines carry over. Plot flags are accepted and ignored: the CLI writes no PNGs,
+the plots stay with the Python scripts or the GUI. Two additions are
+`--threads` (default: `GUIDING_THREADS`, then `SLURM_CPUS_PER_TASK`, then the
+CPU affinity mask) and `--no-raw-reads`, which disables the `pread` fast path
+used for contiguous datasets.
+
+### Dashboard
+
+```bash
+build/release/cpp/gui/guiding_gui --campaign-root ROOT \
+    --case-metrics-root analysis_outputs/campaign/case_metrics
+```
+
+Panels: campaign browser (readiness chips, scores, filtering, reduce
+selected/all), case view (the `plots.py` summary with the plateau window and
+the tentative breakdown), triplet view (comparisons, ratios, late window),
+overview (score against campaign parameters), fields (intensity map and
+lineouts per dump), particles (spectra, acceptance, phase spaces) and a log.
+F5 rescans; the campaign is polled every 10 s by default, so a running
+simulation shows up without restarting. Any window exports as PNG, and the
+plotted series as CSV.
+
+For CI or documentation screenshots there is a headless mode:
+
+```bash
+xvfb-run -a build/release/cpp/gui/guiding_gui --campaign-root ROOT \
+    --self-test 300 --screenshot shot.png --focus Case
+```
+
+### Tests and golden data
+
+`ctest` runs unit tests (numpy/pandas compatibility, CSV text, case-name
+grammar, exit selection), parity tests against committed golden CSVs produced
+by the Python reference, and I/O tests (the `pread` path equals `H5Dread`,
+and thread counts do not change the output). The fixtures live in
+`cpp/tests/data` and are regenerated with:
+
+```bash
+python -m venv .venv && .venv/bin/pip install -r requirements.txt
+.venv/bin/python tools/golden/make_synthetic_openpmd.py   # openPMD fixtures
+.venv/bin/python tools/golden/make_scoring_fixtures.py    # CSV-only scoring fixtures
+.venv/bin/python tools/golden/generate_golden.py          # run the Python reference
+```
+
+### Measured speed-up
+
+One core-i7-4800MQ laptop (8 threads, warm page cache), identical CSV output:
+
+| Workload | Python | guiding_cli |
+|---|---|---|
+| Field reduction, 12 dumps of 3 × 1600 × 160 (212 MB) | 3.06 s | 0.28 s (1 thread), 0.16 s (8 threads) |
+| Particle reduction, one dump of 2 M macroparticles (107 MB) | 10.1 s (read + reduce, no plots) | 5.0 s (including the three CSVs) |
+
+The field path reads each component once (the reference reads `E/r` and `E/t`
+twice each) and reduces dumps in parallel; particle reduction is dominated by
+the weighted percentiles, which sort each sample once and answer every
+percentile from it.
+
 ## Development notes
 
 The module should remain focused on analysis. It should not launch WarpX jobs.

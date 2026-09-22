@@ -177,9 +177,10 @@ table::Record summarize_dump(const io::ParticleDump& dump, const SummaryOptions&
   const auto finite_energy = gather(energy, finite);
   const bool has_finite = any(finite);
   row.set("Emax_MeV", has_finite ? np::max_value<double>(finite_energy) : kNaN);
-  row.set("E99_MeV", has_finite ? weighted_percentile(finite_energy, finite_w, 99.0) : kNaN);
-  row.set("E95_MeV", has_finite ? weighted_percentile(finite_energy, finite_w, 95.0) : kNaN);
-  row.set("E90_MeV", has_finite ? weighted_percentile(finite_energy, finite_w, 90.0) : kNaN);
+  const WeightedSample valid_sample(finite_energy, finite_w);
+  row.set("E99_MeV", has_finite ? valid_sample.percentile(99.0) : kNaN);
+  row.set("E95_MeV", has_finite ? valid_sample.percentile(95.0) : kNaN);
+  row.set("E90_MeV", has_finite ? valid_sample.percentile(90.0) : kNaN);
 
   if (any(hot)) {
     const auto hot_energy = gather(energy, hot);
@@ -187,8 +188,9 @@ table::Record summarize_dump(const io::ParticleDump& dump, const SummaryOptions&
     const auto hot_u = gather(u_long, hot);
     row.set("Emax_hot_MeV", np::max_value<double>(hot_energy));
     row.set("Emean_hot_MeV", weighted_average(hot_energy, hot_w));
-    row.set("E99_hot_MeV", weighted_percentile(hot_energy, hot_w, 99.0));
-    row.set("E95_hot_MeV", weighted_percentile(hot_energy, hot_w, 95.0));
+    const WeightedSample hot_sample(hot_energy, hot_w);
+    row.set("E99_hot_MeV", hot_sample.percentile(99.0));
+    row.set("E95_hot_MeV", hot_sample.percentile(95.0));
     row.set("q_long_mean_hot_mm", weighted_average(hot_q, hot_w) * 1.0e3);
     row.set("q_long_min_hot_mm", np::min_value<double>(hot_q) * 1.0e3);
     row.set("q_long_max_hot_mm", np::max_value<double>(hot_q) * 1.0e3);

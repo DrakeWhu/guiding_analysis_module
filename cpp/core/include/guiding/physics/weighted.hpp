@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstddef>
 #include <limits>
 #include <numeric>
@@ -65,27 +66,57 @@ using Mask = std::vector<char>;
 // The cumulative-weight percentile used across cap_guiding: finite values with
 // positive weights, sorted by value, first index whose cumulative weight
 // reaches p/100 of the total (searchsorted side="left"), no interpolation.
-[[nodiscard]] inline double weighted_percentile(std::span<const double> values, std::span<const double> weights,
-                                                double percentile) {
-  std::vector<std::size_t> kept;
-  for (std::size_t i = 0; i < values.size(); ++i) {
-    if (std::isfinite(values[i]) && std::isfinite(weights[i]) && weights[i] > 0.0) {
-      kept.push_back(i);
+// Sorting once and querying several percentiles is what the reference does
+// implicitly; the sample keeps the exact order and cumulative sums.
+class WeightedSample {
+ public:
+  WeightedSample(std::span<const double> values, std::span<const double> weights) {
+    // 16 bytes per entry sorts noticeably faster than carrying the weight along.
+    struct Entry {
+      double value;
+      std::uint32_t index;
+    };
+    std::vector<Entry> entries;
+    entries.reserve(values.size());
+    for (std::size_t i = 0; i < values.size(); ++i) {
+      if (std::isfinite(values[i]) && std::isfinite(weights[i]) && weights[i] > 0.0) {
+        entries.push_back({values[i], static_cast<std::uint32_t>(i)});
+      }
+    }
+    // Equivalent to a stable sort by value, but without the merge buffer.
+    std::sort(entries.begin(), entries.end(), [](const Entry& a, const Entry& b) {
+      return a.value < b.value || (a.value == b.value && a.index < b.index);
+    });
+    values_.reserve(entries.size());
+    cumulative_.reserve(entries.size());
+    double running = 0.0;
+    for (std::size_t i = 0; i < entries.size(); ++i) {
+      const double weight = weights[entries[i].index];
+      running = i == 0 ? weight : running + weight;
+      values_.push_back(entries[i].value);
+      cumulative_.push_back(running);
     }
   }
-  if (kept.empty()) {
-    return std::numeric_limits<double>::quiet_NaN();
+
+  [[nodiscard]] bool empty() const noexcept { return values_.empty(); }
+
+  [[nodiscard]] double percentile(double percentile) const {
+    if (values_.empty()) {
+      return std::numeric_limits<double>::quiet_NaN();
+    }
+    const double target = percentile / 100.0 * cumulative_.back();
+    const auto position = std::lower_bound(cumulative_.begin(), cumulative_.end(), target) - cumulative_.begin();
+    return values_[static_cast<std::size_t>(position)];
   }
-  std::stable_sort(kept.begin(), kept.end(), [&](std::size_t a, std::size_t b) { return values[a] < values[b]; });
-  std::vector<double> cumulative(kept.size());
-  double running = 0.0;
-  for (std::size_t i = 0; i < kept.size(); ++i) {
-    running = i == 0 ? weights[kept[i]] : running + weights[kept[i]];
-    cumulative[i] = running;
-  }
-  const double target = percentile / 100.0 * cumulative.back();
-  const auto position = std::lower_bound(cumulative.begin(), cumulative.end(), target) - cumulative.begin();
-  return values[kept[static_cast<std::size_t>(position)]];
+
+ private:
+  std::vector<double> values_;
+  std::vector<double> cumulative_;
+};
+
+[[nodiscard]] inline double weighted_percentile(std::span<const double> values, std::span<const double> weights,
+                                                double percentile) {
+  return WeightedSample(values, weights).percentile(percentile);
 }
 
 }  // namespace guiding::physics

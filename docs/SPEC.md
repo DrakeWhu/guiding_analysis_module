@@ -198,7 +198,7 @@ z_Ez_absmax_rel_um,propagation_mm,z_peak_relative_um
   - The particle dump is the first minimum of `|it − target_it|`, so ties go to the earlier dump.
 - **Case directory:** `DIAG/../..` when DIAG's parent is named `diags`, else `OUTDIR/..`. Both are lexical, as in pathlib.
 
-## 7. Scoring layers (`scoring.py`, `beamlike_pairs.py`, `joint_scores.py`)
+## 6. Scoring layers (`scoring.py`, `beamlike_pairs.py`, `joint_scores.py`)
 
 These consume reduced CSVs only, so they are pure table-to-table transforms.
 
@@ -225,7 +225,7 @@ These consume reduced CSVs only, so they are pure table-to-table transforms.
 - Correlations use `np.corrcoef` (Pearson) and `scipy.stats.spearmanr` (average ranks) on the rows where both values are finite, needing at least 3.
 - `pandas.merge` ordering for unique keys: inner and left keep the left order, right keeps the right order, outer sorts the keys. `value_counts` sorts by count, keeping first-appearance order for ties.
 
-## 8. CSV text
+## 7. CSV text
 
 | Writer | Line end | Float | NaN | bool | None |
 |---|---|---|---|---|---|
@@ -235,7 +235,7 @@ These consume reduced CSVs only, so they are pure table-to-table transforms.
 - **Python `repr`:** shortest round-trip digits. It uses exponent notation when `decpt <= −4` or `decpt > 16`, e.g. `1e-05`, `1e+16`, `1000000000000000.0`.
 - **Quoting:** `QUOTE_MINIMAL`, which quotes fields containing `,`, `"`, `\r` or `\n`, plus a lone empty field.
 
-## 9. Compatibility quirks (kept on purpose)
+## 8. Compatibility quirks (kept on purpose)
 
 - **Plateau-token separators:** `case_metadata._PLATEAU_TOKEN_RE` accepts `\`, `/`, `s`, `S`, `_` and `-` around `L<x>mm`. It does not accept whitespace, because `\\s` in a raw string is a literal `s`. A `P` fraction separator (`L2P5mm`) raises `ValueError`.
 - **HDF5 counting:** readiness counts `*.h5` recursively, while the series listing only reads top-level `*.h5`/`*.hdf5` files.
