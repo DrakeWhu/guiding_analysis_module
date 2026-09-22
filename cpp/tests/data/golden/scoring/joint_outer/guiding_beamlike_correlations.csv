@@ -1,0 +1,14 @@
+x,y,description,n,pearson,spearman
+guiding_final_score,beam_beamlike_gain_score,guiding final score vs beam gain score,4,0.9565775724523063,1.0
+guiding_reference_factor,beam_beamlike_reference_factor,guiding reference factor vs beam reference factor,4,0.9973419987391323,1.0
+guiding_score_channel,beam_beamlike_score_channel,absolute guiding score vs absolute beamlike score,6,0.06516597566904823,-0.028571428571428574
+guiding_a0_exit_channel,beam_E95_hot_MeV_channel,a0 exit vs hot E95,4,0.91607077909365,0.19999999999999998
+guiding_a0_exit_channel,beam_charge_hot_pC_channel,a0 exit vs hot charge,4,0.5669040866118841,0.19999999999999998
+guiding_waist_growth_channel,beam_z_span_hot_mm_channel,waist growth vs hot z span,4,-0.6261573583793382,-0.7745966692414834
+guiding_fraction_a0_beats_reference,beam_beamlike_reference_factor,fraction a0 beats reference vs beam reference factor,4,0.9982823207200284,0.9486832980505139
+guiding_final_score,beam_transverse_gain_score,guiding final score vs transverse gain score,2,,
+beam_beamlike_gain_score,beam_transverse_gain_score,beam gain score vs transverse gain score,5,0.9651531852837594,0.9486832980505138
+beam_beamlike_reference_factor,beam_transverse_reference_factor,beam reference factor vs transverse reference factor,5,0.9983612880158783,0.9486832980505138
+beam_E95_hot_MeV_channel,beam_theta_rms_mrad_channel,hot E95 vs transverse RMS divergence,0,,
+beam_E95_hot_MeV_channel,beam_emit_geom_norm_mm_mrad_channel,hot E95 vs geometric normalized emittance,5,-0.972566386019042,-0.7071067811865475
+beam_charge_hot_pC_channel,beam_theta_r_p95_mrad_channel,hot charge vs transverse p95 divergence,5,-0.867924966930691,-0.7071067811865475

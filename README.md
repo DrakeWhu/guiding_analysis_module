@@ -442,6 +442,81 @@ done < "$ROOT/analysis_outputs/cleanup_safe_not_running.txt" | wc -l
 du -sh "$ROOT"
 ```
 
+## C++ tools: guiding_cli and guiding_gui
+
+The Python pipeline above remains the reference. The same reductions are also
+available as a C++20 library (`libguiding_core`) with two front ends:
+
+- **`guiding_cli`** — headless, no GL or X11, SLURM friendly. It reproduces
+  `analyze_case.py`, `analyze_campaign.py`, `analyze_particle_case.py`,
+  `analyze_particle_campaign.py`, `compare_triplet.py` and the `score_*.py`
+  scripts, writing the same CSV files.
+- **`guiding_gui`** — a Dear ImGui/ImPlot dashboard for browsing a campaign
+  while it runs: readiness, case and triplet plots, field maps, particle
+  spectra and phase spaces, with background loading and a polling refresh.
+
+The C++ products are byte-identical to the Python ones, with the documented
+exceptions in `docs/SPEC.md` (§8). `docs/SPEC.md` is the numerical contract:
+openPMD read semantics, the reduction formulas and the CSV text rules.
+
+### Build and run
+
+```bash
+sudo apt install build-essential cmake ninja-build libhdf5-dev   # once
+tools/build.sh                                                   # configure + build + test
+build/release/cpp/cli/guiding_cli campaign --campaign-root /path/to/campaign
+build/release/cpp/gui/guiding_gui   --campaign-root /path/to/campaign
+```
+
+`tools/build.sh [release|hpc|dev|tsan]` wraps the CMake presets and honours
+`HDF5_ROOT` and `GUIDING_FETCH_HDF5`. On SUNRISE:
+
+```bash
+module load GCC/12.1.0 CMake HDF5
+HDF5_ROOT="$EBROOTHDF5" tools/build.sh hpc      # optimised, GUI off
+```
+
+HDF5 is the only dependency that must already exist; fmt, fast_float, CLI11,
+Catch2, GLFW, Dear ImGui, ImPlot and nlohmann/json are fetched by CMake with
+pinned versions and hashes (or taken from an installed copy).
+
+### Command mapping
+
+| Python script | guiding_cli |
+|---|---|
+| `analyze_case.py` | `guiding_cli case --diag DIAG --outdir DIR` |
+| `analyze_campaign.py` | `guiding_cli campaign --campaign-root ROOT [--run-cases --run-triplets]` |
+| `compare_triplet.py` | `guiding_cli triplet --channel A --uniform B --vacuum C` |
+| `analyze_particle_case.py` | `guiding_cli particles --diag DIAG --outdir DIR` |
+| `analyze_particle_campaign.py` | `guiding_cli particles-campaign --campaign-root ROOT` |
+| `score_campaign.py` | `guiding_cli score campaign --campaign-root ROOT` |
+| `score_triplets.py` | `guiding_cli score triplets --campaign-root ROOT` |
+| `score_beamlike_pairs.py` | `guiding_cli score beamlike-pairs --campaign-root ROOT` |
+| `compare_guiding_beamlike_scores.py` | `guiding_cli score joint --campaign-root ROOT` |
+| (new) | `guiding_cli inspect --diag DIAG` prints the series layout as JSON |
+
+Flags keep their Python names and the `[OK]/[SKIP]/[FAIL]` log vocabulary, so
+existing SUNRISE command lines carry over. Plot flags are accepted and ignored
+(the CLI writes no PNGs); `--threads` and `--no-raw-reads` are the additions.
+
+### Parity and speed
+
+Outputs are byte-identical to the Python reference, checked by parity tests
+against committed goldens produced by `cap_guiding`/`scripts`, with two
+documented 1e-12 tolerances (`docs/SPEC.md` §8). Measured on an i7-4800MQ
+(8 threads, warm cache, identical CSVs):
+
+| Workload | Python | guiding_cli |
+|---|---|---|
+| 12 field dumps, 3 × 1600 × 160 (212 MB) | 3.06 s | 0.28 s (1 thread), 0.16 s (8 threads) |
+| 1 particle dump, 2 M macroparticles (107 MB) | 10.1 s (read + reduce) | 5.0 s (with CSVs) |
+
+**[`docs/CPP_TOOLS.md`](docs/CPP_TOOLS.md)** is the full guide: install options,
+every subcommand with examples, a SLURM snippet, the dashboard tour, the
+repository map, how to regenerate fixtures and goldens, how to check the tools
+against your own campaign (`GUIDING_REAL_DATA_DIR`), and troubleshooting.
+**[`docs/SPEC.md`](docs/SPEC.md)** is the numerical contract.
+
 ## Development notes
 
 The module should remain focused on analysis. It should not launch WarpX jobs.

@@ -1,0 +1,39 @@
+=== Beamlike channel-vs-uniform summary ===
+campaign_root           = synthetic/scoring/campaign
+case_metrics_root       = synthetic/scoring/case_metrics
+particle_outdir_name    = particle_analysis
+row_selection           = last
+outdir                  = golden/scoring/beamlike_last
+cases discovered        = 22
+pairs attempted         = 13
+pairs ok                = 8
+pairs positive          = 5
+pairs neutral           = 0
+pairs negative          = 3
+pairs failed            = 5
+skipped no channel      = 0
+skipped no uniform      = 0
+pair_scores             = golden/scoring/beamlike_last/beamlike_pair_scores.csv
+positive_pairs          = golden/scoring/beamlike_last/positive_beamlike_pairs.csv
+neutral_pairs           = golden/scoring/beamlike_last/neutral_beamlike_pairs.csv
+negative_pairs          = golden/scoring/beamlike_last/negative_beamlike_pairs.csv
+failed_pairs            = golden/scoring/beamlike_last/failed_beamlike_pairs.csv
+top_positive_pairs      = golden/scoring/beamlike_last/top_beamlike_pairs.csv
+worst_negative_pairs    = golden/scoring/beamlike_last/worst_negative_beamlike_pairs.csv
+
+Top 3 positive beamlike channel-vs-uniform pairs:
+  rank=1  beamlike_gain_score=529.3602691855547  beamlike_reference_factor=0.9995224845650404  beamlike_score_channel=529.6131676476642  beamlike_score_uniform=92.1759447073266  beamlike_score_delta=437.4372229403376  charge_hot_pC_channel=1185.6602501274408  charge_hot_pC_uniform=639.2527861732989  E95_hot_MeV_channel=196.9660250127441  E95_hot_MeV_uniform=108.72527861732989  mono_proxy_E95_over_Emax_channel=0.5393432795273647  mono_proxy_E95_over_Emax_uniform=0.5331092588097864  channel_case_id=020_f20_chan_n4e18cm3_L4mm_d150um_foc0um_rz  uniform_case_id=021_f20_uni_n4e18cm3_L4mm_foc0um_rz  plateau=4  diameter=150  focus=0um
+  rank=2  beamlike_gain_score=358.77520729563633  beamlike_reference_factor=0.998786874120701  beamlike_score_channel=359.2109754260539  beamlike_score_uniform=75.41969016099591  beamlike_score_delta=283.791285265058  charge_hot_pC_channel=558.9804670504188  charge_hot_pC_uniform=338.89494704462976  E95_hot_MeV_channel=190.1960934100838  E95_hot_MeV_uniform=112.57898940892596  mono_proxy_E95_over_Emax_channel=0.5330395696303261  mono_proxy_E95_over_Emax_uniform=0.5393862193158262  channel_case_id=001_f20_chan_n4e18cm3_L2mm_d150um_foc0um_rz  uniform_case_id=003_f20_uni_n4e18cm3_L2mm_foc0um_rz  plateau=2  diameter=150  focus=0um
+  rank=3  beamlike_gain_score=279.00733457004793  beamlike_reference_factor=0.9958880675794889  beamlike_score_channel=280.1593308052949  beamlike_score_uniform=75.41969016099591  beamlike_score_delta=204.73964064429902  charge_hot_pC_channel=511.7531044477307  charge_hot_pC_uniform=338.89494704462976  E95_hot_MeV_channel=169.5361009541699  E95_hot_MeV_uniform=112.57898940892596  mono_proxy_E95_over_Emax_channel=0.5401313952634152  mono_proxy_E95_over_Emax_uniform=0.5393862193158262  channel_case_id=000_f20_chan_n4e18cm3_L2mm_d100um_foc0um_rz  uniform_case_id=003_f20_uni_n4e18cm3_L2mm_foc0um_rz  plateau=2  diameter=100  focus=0um
+
+Worst 3 negative beamlike channel-vs-uniform pairs:
+  rank=1  beamlike_gain_score=-75.65846419826212  beamlike_reference_factor=-0.19332082707011525  beamlike_score_channel=344.1611430248186  beamlike_score_uniform=391.36220005318756  beamlike_score_delta=-47.20105702836895  charge_hot_pC_channel=770.6598522208649  charge_hot_pC_uniform=799.9711326027989  E95_hot_MeV_channel=169.94012702740577  E95_hot_MeV_uniform=181.14281768037318  mono_proxy_E95_over_Emax_channel=0.5405571228275717  mono_proxy_E95_over_Emax_uniform=0.5334967809609783  channel_case_id=010_f20_chan_n4e18cm3_L3mm_d100um_foc0um_rz  uniform_case_id=013_f20_uni_n4e18cm3_L3mm_foc0um_rz  plateau=3  diameter=100  focus=0um
+  rank=2  beamlike_gain_score=-52.39090918729258  beamlike_reference_factor=-0.13386808736299127  beamlike_score_channel=352.8201103114019  beamlike_score_uniform=391.36220005318756  beamlike_score_delta=-38.542089741785674  charge_hot_pC_channel=783.1010821205766  charge_hot_pC_uniform=799.9711326027989  E95_hot_MeV_channel=171.59895768070066  E95_hot_MeV_uniform=181.14281768037318  mono_proxy_E95_over_Emax_channel=0.5422909464159248  mono_proxy_E95_over_Emax_uniform=0.5334967809609783  channel_case_id=012_f20_chan_n4e18cm3_L3mm_d200um_foc0um_rz  uniform_case_id=013_f20_uni_n4e18cm3_L3mm_foc0um_rz  plateau=3  diameter=200  focus=0um
+  rank=3  beamlike_gain_score=-49.210982062216644  beamlike_reference_factor=-0.11910758164476051  beamlike_score_channel=374.75897234027366  beamlike_score_uniform=413.16414440340884  beamlike_score_delta=-38.40517206313518  charge_hot_pC_channel=783.1010821205766  charge_hot_pC_uniform=799.9711326027989  E95_hot_MeV_channel=171.59895768070066  E95_hot_MeV_uniform=181.14281768037318  mono_proxy_E95_over_Emax_channel=0.5422909464159248  mono_proxy_E95_over_Emax_uniform=0.5334967809609783  channel_case_id=017_f20_chan_n4e18cm3_L3mm_d200um_focm200um_rz  uniform_case_id=018_f20_uni_n4e18cm3_L3mm_focm200um_rz  plateau=3  diameter=200  focus=m200um
+
+First failures:
+  011_f20_chan_n4e18cm3_L3mm_d150um_foc0um_rz vs 013_f20_uni_n4e18cm3_L3mm_foc0um_rz: missing_columns: ['channel:E95_hot_MeV']
+  005_f20_chan_n4e18cm3_L2mm_d100um_focm200um_rz vs 008_f20_uni_n4e18cm3_L2mm_focm200um_rz: missing_csv: synthetic/scoring/case_metrics/008_f20_uni_n4e18cm3_L2mm_focm200um_rz/particle_analysis/particle_summary.csv
+  006_f20_chan_n4e18cm3_L2mm_d150um_focm200um_rz vs 008_f20_uni_n4e18cm3_L2mm_focm200um_rz: missing_csv: synthetic/scoring/case_metrics/008_f20_uni_n4e18cm3_L2mm_focm200um_rz/particle_analysis/particle_summary.csv
+  007_f20_chan_n4e18cm3_L2mm_d200um_focm200um_rz vs 008_f20_uni_n4e18cm3_L2mm_focm200um_rz: missing_csv: synthetic/scoring/case_metrics/008_f20_uni_n4e18cm3_L2mm_focm200um_rz/particle_analysis/particle_summary.csv
+  015_f20_chan_n4e18cm3_L3mm_d100um_focm200um_rz vs 018_f20_uni_n4e18cm3_L3mm_focm200um_rz: missing_csv: synthetic/scoring/case_metrics/015_f20_chan_n4e18cm3_L3mm_d100um_focm200um_rz/particle_analysis/particle_summary.csv

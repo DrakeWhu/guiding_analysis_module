@@ -1,0 +1,17 @@
+{
+  "generator": "tools/golden/generate_golden.py",
+  "reference_commit": "d86c5511a611964123f46d3636fdd2dac5bb4c17",
+  "reference_sources_modified": false,
+  "versions": {
+    "python": "3.11.2",
+    "numpy": "2.4.6",
+    "pandas": "3.0.5",
+    "h5py": "3.16.0",
+    "openpmd_viewer": "1.11.0"
+  },
+  "cases": [
+    "000_f20_chan_n4e18cm3_L2mm_d150um_foc0um_rz",
+    "001_f20_uni_n4e18cm3_L2mm_refd150um_foc0um_rz",
+    "002_f20_vac_L2mm_refd150um_foc0um_rz"
+  ]
+}

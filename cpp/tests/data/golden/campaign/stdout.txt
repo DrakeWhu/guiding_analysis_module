@@ -1,0 +1,55 @@
+=== Campaign dry-run summary ===
+campaign_root        = cpp/tests/data/synthetic/campaign
+outdir               = cpp/tests/data/golden/campaign
+case_metrics_root    = cpp/tests/data/golden/campaign/case_metrics
+triplets_root        = <channel metrics dir>
+cases detected       = 3
+triplets structural complete = 1
+triplets ready min_h5        = 1
+triplets ready for analysis  = 1
+cases with valid CSV metrics = 0
+cases usable CSV or HDF5     = 3
+triplets CSV complete        = 0
+triplets usable CSV or HDF5  = 1
+triplets incomplete          = 0
+cases insufficient h5        = 0
+cases unstable h5 age        = 0
+min_h5                       = 2
+min_last_h5_age_min          = 0.0
+reports:
+  - cpp/tests/data/golden/campaign/campaign_cases.csv
+  - cpp/tests/data/golden/campaign/campaign_triplets.csv
+  - cpp/tests/data/golden/campaign/campaign_insufficient_h5.csv
+  - cpp/tests/data/golden/campaign/campaign_unstable_h5.csv
+===============================
+[MAKE] case metrics for 000_f20_chan_n4e18cm3_L2mm_d150um_foc0um_rz
+       diag   = cpp/tests/data/synthetic/campaign/000_f20_chan_n4e18cm3_L2mm_d150um_foc0um_rz/diags/diag1
+       outdir = cpp/tests/data/golden/campaign/case_metrics/000_f20_chan_n4e18cm3_L2mm_d150um_foc0um_rz
+[READ] iteration 0
+[READ] iteration 5400
+[READ] iteration 6100
+[READ] iteration 6800
+[OK] wrote cpp/tests/data/golden/campaign/case_metrics/000_f20_chan_n4e18cm3_L2mm_d150um_foc0um_rz/guiding_metrics.csv
+[OK] wrote cpp/tests/data/golden/campaign/case_metrics/000_f20_chan_n4e18cm3_L2mm_d150um_foc0um_rz/guiding_singlecase_score.csv
+[MAKE] case metrics for 001_f20_uni_n4e18cm3_L2mm_refd150um_foc0um_rz
+       diag   = cpp/tests/data/synthetic/campaign/001_f20_uni_n4e18cm3_L2mm_refd150um_foc0um_rz/diags/diag1
+       outdir = cpp/tests/data/golden/campaign/case_metrics/001_f20_uni_n4e18cm3_L2mm_refd150um_foc0um_rz
+[READ] iteration 0
+[READ] iteration 5400
+[READ] iteration 6100
+[READ] iteration 6800
+[OK] wrote cpp/tests/data/golden/campaign/case_metrics/001_f20_uni_n4e18cm3_L2mm_refd150um_foc0um_rz/guiding_metrics.csv
+[OK] wrote cpp/tests/data/golden/campaign/case_metrics/001_f20_uni_n4e18cm3_L2mm_refd150um_foc0um_rz/guiding_singlecase_score.csv
+[MAKE] case metrics for 002_f20_vac_L2mm_refd150um_foc0um_rz
+       diag   = cpp/tests/data/synthetic/campaign/002_f20_vac_L2mm_refd150um_foc0um_rz/diags/diag1
+       outdir = cpp/tests/data/golden/campaign/case_metrics/002_f20_vac_L2mm_refd150um_foc0um_rz
+[READ] iteration 0
+[READ] iteration 5400
+[READ] iteration 6100
+[READ] iteration 6800
+[OK] wrote cpp/tests/data/golden/campaign/case_metrics/002_f20_vac_L2mm_refd150um_foc0um_rz/guiding_metrics.csv
+[OK] wrote cpp/tests/data/golden/campaign/case_metrics/002_f20_vac_L2mm_refd150um_foc0um_rz/guiding_singlecase_score.csv
+[OK] wrote cpp/tests/data/golden/campaign/case_metrics/000_f20_chan_n4e18cm3_L2mm_d150um_foc0um_rz/guiding_triplet_long.csv
+[OK] wrote cpp/tests/data/golden/campaign/case_metrics/000_f20_chan_n4e18cm3_L2mm_d150um_foc0um_rz/guiding_triplet_wide.csv
+[OK] wrote cpp/tests/data/golden/campaign/case_metrics/000_f20_chan_n4e18cm3_L2mm_d150um_foc0um_rz/guiding_triplet_late_summary.csv
+[OK] wrote cpp/tests/data/golden/campaign/case_metrics/000_f20_chan_n4e18cm3_L2mm_d150um_foc0um_rz/guiding_triplet_late_ratios.csv

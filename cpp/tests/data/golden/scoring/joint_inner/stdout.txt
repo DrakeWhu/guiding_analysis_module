@@ -1,0 +1,67 @@
+=== Guiding + beamlike joint summary ===
+triplet_scores_csv        = golden/scoring/triplets/triplet_scores.csv
+beamlike_pair_scores_csv  = golden/scoring/beamlike_last/beamlike_pair_scores.csv
+join_how                  = inner
+outdir                    = golden/scoring/joint_inner
+joined pairs              = 12
+
+Joint buckets (guiding + beam):
+                   joint_bucket  count
+                         failed      7
+guiding_positive__beam_positive      3
+guiding_negative__beam_positive      1
+guiding_negative__beam_negative      1
+
+Triple buckets (guiding + beam + transverse):
+                                       triple_bucket  count
+                                              failed      9
+guiding_positive__beam_positive__transverse_positive      3
+
+Outputs:
+joined                               = golden/scoring/joint_inner/guiding_beamlike_joined.csv
+joined_triple                        = golden/scoring/joint_inner/guiding_beam_transverse_joined.csv
+bucket_counts                        = golden/scoring/joint_inner/guiding_beamlike_bucket_counts.csv
+triple_bucket_counts                 = golden/scoring/joint_inner/guiding_beam_transverse_bucket_counts.csv
+correlations                         = golden/scoring/joint_inner/guiding_beamlike_correlations.csv
+both_positive                        = golden/scoring/joint_inner/both_positive_guiding_beamlike.csv
+guiding_positive_beam_negative       = golden/scoring/joint_inner/guiding_positive_beam_negative.csv
+guiding_positive_beam_neutral        = golden/scoring/joint_inner/guiding_positive_beam_neutral.csv
+beam_positive_guiding_nonpositive    = golden/scoring/joint_inner/beam_positive_guiding_nonpositive.csv
+both_negative                        = golden/scoring/joint_inner/both_negative_guiding_beamlike.csv
+triple_positive                      = golden/scoring/joint_inner/guiding_positive_beam_positive_transverse_positive.csv
+guiding_positive_beam_positive_transverse_negative = golden/scoring/joint_inner/guiding_positive_beam_positive_transverse_negative.csv
+guiding_negative_beam_positive_transverse_positive = golden/scoring/joint_inner/guiding_negative_beam_positive_transverse_positive.csv
+beam_positive_transverse_negative    = golden/scoring/joint_inner/beam_positive_transverse_negative.csv
+
+Correlations:
+                                         description  n   pearson  spearman
+              guiding final score vs beam gain score  5  0.961271  1.000000
+   guiding reference factor vs beam reference factor  5  0.996086  1.000000
+   absolute guiding score vs absolute beamlike score  7  0.084783  0.142857
+                                  a0 exit vs hot E95  5  0.932539  0.500000
+                               a0 exit vs hot charge  5  0.243706  0.100000
+                          waist growth vs hot z span  5 -0.188519  0.000000
+fraction a0 beats reference vs beam reference factor  5  0.998548  0.894427
+        guiding final score vs transverse gain score  3  0.991867  0.866025
+            beam gain score vs transverse gain score  5  0.997782  0.948683
+beam reference factor vs transverse reference factor  5  0.998330  0.948683
+                hot E95 vs transverse RMS divergence  0       NaN       NaN
+           hot E95 vs geometric normalized emittance  5 -0.953961 -0.707107
+             hot charge vs transverse p95 divergence  5  0.240803  0.000000
+
+Top 3 both-positive cases:
+  channel_case_id=001_f20_chan_n4e18cm3_L2mm_d150um_foc0um_rz  uniform_case_id=003_f20_uni_n4e18cm3_L2mm_foc0um_rz  guiding_final_score=72.00039032292418  guiding_reference_factor=0.8567063106134685  beam_beamlike_gain_score=358.77520729563633  beam_beamlike_reference_factor=0.998786874120701  beam_transverse_gain_score=782.7413358588035  beam_transverse_reference_factor=0.9584587786026166  joint_positive_score=160.72322471713244  triple_positive_score=272.43224839081154  transverse_bucket=positive  triple_bucket=guiding_positive__beam_positive__transverse_positive  guiding_a0_exit_channel=1.2054184535648618  beam_E95_hot_MeV_channel=190.1960934100838  beam_charge_hot_pC_channel=558.9804670504188  guiding_waist_growth_channel=1.1841948821973531  beam_z_span_hot_mm_channel=0.1071428571428567  beam_theta_rms_mrad_channel=nan  beam_theta_r_p95_mrad_channel=5.357142857142858  beam_emit_x_norm_mm_mrad_channel=nan  beam_emit_y_norm_mm_mrad_channel=nan
+  channel_case_id=000_f20_chan_n4e18cm3_L2mm_d100um_foc0um_rz  uniform_case_id=003_f20_uni_n4e18cm3_L2mm_foc0um_rz  guiding_final_score=61.62430455173755  guiding_reference_factor=0.7791574212951604  beam_beamlike_gain_score=279.007334570048  beam_beamlike_reference_factor=0.9958880675794888  beam_transverse_gain_score=576.561218486695  beam_transverse_reference_factor=0.8811343353335084  joint_positive_score=131.12449411804482  triple_positive_score=214.81817667786854  transverse_bucket=positive  triple_bucket=guiding_positive__beam_positive__transverse_positive  guiding_a0_exit_channel=1.051697068365342  beam_E95_hot_MeV_channel=169.5361009541699  beam_charge_hot_pC_channel=511.7531044477307  guiding_waist_growth_channel=1.1854194105867673  beam_z_span_hot_mm_channel=0.1250270146454308  beam_theta_rms_mrad_channel=nan  beam_theta_r_p95_mrad_channel=6.251350732271527  beam_emit_x_norm_mm_mrad_channel=nan  beam_emit_y_norm_mm_mrad_channel=nan
+  channel_case_id=002_f20_chan_n4e18cm3_L2mm_d200um_foc0um_rz  uniform_case_id=003_f20_uni_n4e18cm3_L2mm_foc0um_rz  guiding_final_score=59.96382125753967  guiding_reference_factor=0.7586459970994696  beam_beamlike_gain_score=249.61362506586343  beam_beamlike_reference_factor=0.9930045988832528  beam_transverse_gain_score=576.561218486695  beam_transverse_reference_factor=0.8811343353335084  joint_positive_score=122.34290660637403  triple_positive_score=205.1166925839817  transverse_bucket=positive  triple_bucket=guiding_positive__beam_positive__transverse_positive  guiding_a0_exit_channel=1.0518805538492968  beam_E95_hot_MeV_channel=163.59986642501408  beam_charge_hot_pC_channel=482.0719318019516  guiding_waist_growth_channel=1.1866618348071507  beam_z_span_hot_mm_channel=0.1250270146454308  beam_theta_rms_mrad_channel=nan  beam_theta_r_p95_mrad_channel=6.251350732271527  beam_emit_x_norm_mm_mrad_channel=nan  beam_emit_y_norm_mm_mrad_channel=nan
+
+Top 1 guiding/beam contradictions:
+  channel_case_id=016_f20_chan_n4e18cm3_L3mm_d150um_focm200um_rz  uniform_case_id=018_f20_uni_n4e18cm3_L3mm_focm200um_rz  guiding_final_score=-17.53921756228303  guiding_reference_factor=-0.2140705487330939  beam_beamlike_gain_score=116.07734050257348  beam_beamlike_reference_factor=0.2419991342013747  beam_transverse_gain_score=nan  beam_transverse_reference_factor=nan  joint_positive_score=0.0  triple_positive_score=0.0  transverse_bucket=failed  triple_bucket=failed  guiding_a0_exit_channel=1.1911486422639654  beam_E95_hot_MeV_channel=193.75280242260283  beam_charge_hot_pC_channel=865.1460181695212  guiding_waist_growth_channel=1.263933233747135  beam_z_span_hot_mm_channel=0.1071428571428567  beam_theta_rms_mrad_channel=nan  beam_theta_r_p95_mrad_channel=nan  beam_emit_x_norm_mm_mrad_channel=nan  beam_emit_y_norm_mm_mrad_channel=nan  joint_bucket=guiding_negative__beam_positive
+
+Top 3 three-leg positive cases:
+  channel_case_id=001_f20_chan_n4e18cm3_L2mm_d150um_foc0um_rz  uniform_case_id=003_f20_uni_n4e18cm3_L2mm_foc0um_rz  guiding_final_score=72.00039032292418  guiding_reference_factor=0.8567063106134685  beam_beamlike_gain_score=358.77520729563633  beam_beamlike_reference_factor=0.998786874120701  beam_transverse_gain_score=782.7413358588035  beam_transverse_reference_factor=0.9584587786026166  joint_positive_score=160.72322471713244  triple_positive_score=272.43224839081154  transverse_bucket=positive  triple_bucket=guiding_positive__beam_positive__transverse_positive  guiding_a0_exit_channel=1.2054184535648618  beam_E95_hot_MeV_channel=190.1960934100838  beam_charge_hot_pC_channel=558.9804670504188  guiding_waist_growth_channel=1.1841948821973531  beam_z_span_hot_mm_channel=0.1071428571428567  beam_theta_rms_mrad_channel=nan  beam_theta_r_p95_mrad_channel=5.357142857142858  beam_emit_x_norm_mm_mrad_channel=nan  beam_emit_y_norm_mm_mrad_channel=nan
+  channel_case_id=000_f20_chan_n4e18cm3_L2mm_d100um_foc0um_rz  uniform_case_id=003_f20_uni_n4e18cm3_L2mm_foc0um_rz  guiding_final_score=61.62430455173755  guiding_reference_factor=0.7791574212951604  beam_beamlike_gain_score=279.007334570048  beam_beamlike_reference_factor=0.9958880675794888  beam_transverse_gain_score=576.561218486695  beam_transverse_reference_factor=0.8811343353335084  joint_positive_score=131.12449411804482  triple_positive_score=214.81817667786854  transverse_bucket=positive  triple_bucket=guiding_positive__beam_positive__transverse_positive  guiding_a0_exit_channel=1.051697068365342  beam_E95_hot_MeV_channel=169.5361009541699  beam_charge_hot_pC_channel=511.7531044477307  guiding_waist_growth_channel=1.1854194105867673  beam_z_span_hot_mm_channel=0.1250270146454308  beam_theta_rms_mrad_channel=nan  beam_theta_r_p95_mrad_channel=6.251350732271527  beam_emit_x_norm_mm_mrad_channel=nan  beam_emit_y_norm_mm_mrad_channel=nan
+  channel_case_id=002_f20_chan_n4e18cm3_L2mm_d200um_foc0um_rz  uniform_case_id=003_f20_uni_n4e18cm3_L2mm_foc0um_rz  guiding_final_score=59.96382125753967  guiding_reference_factor=0.7586459970994696  beam_beamlike_gain_score=249.61362506586343  beam_beamlike_reference_factor=0.9930045988832528  beam_transverse_gain_score=576.561218486695  beam_transverse_reference_factor=0.8811343353335084  joint_positive_score=122.34290660637403  triple_positive_score=205.1166925839817  transverse_bucket=positive  triple_bucket=guiding_positive__beam_positive__transverse_positive  guiding_a0_exit_channel=1.0518805538492968  beam_E95_hot_MeV_channel=163.59986642501408  beam_charge_hot_pC_channel=482.0719318019516  guiding_waist_growth_channel=1.1866618348071507  beam_z_span_hot_mm_channel=0.1250270146454308  beam_theta_rms_mrad_channel=nan  beam_theta_r_p95_mrad_channel=6.251350732271527  beam_emit_x_norm_mm_mrad_channel=nan  beam_emit_y_norm_mm_mrad_channel=nan
+
+No guiding+beam positive but transverse negative cases.
+
+No guiding-negative but beam+transverse-positive cases.
