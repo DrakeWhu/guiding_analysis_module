@@ -114,9 +114,10 @@ def read_particle_dump(
     *,
     species: str,
     iteration: int,
+    series: Any | None = None,
 ) -> ParticleDump:
     """Read one particle openPMD dump written by WarpX ParticleDiagnostic."""
-    ts = open_series(diag)
+    ts = open_series(diag) if series is None else series
     arrays = ts.get_particle(
         var_list=DEFAULT_PARTICLE_VARS,
         species=species,

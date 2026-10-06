@@ -177,6 +177,20 @@ find "$ROOT" -maxdepth 2 -name guiding_metrics.csv | wc -l
 
 ## Particle reduced outputs
 
+### Physical beam evolution
+
+The independent `scripts/analyze_beam_evolution.py` command writes
+`CASE_DIR/beam_analysis/beam_evolution.csv` (all available frames, by electron
+species) and `beam_evolution_summary.csv` (full-plasma integrals and quality
+means with explicit coverage). It uses a hard >=50 MeV forward population,
+physical weights, absolute guiding mesh coordinates in um, normalized RMS
+emittances, centered angular spread and energy spread. No optimizer score is
+added and the existing outputs below retain their definitions.
+
+See [the versioned contract, usage and validation](docs/BEAM_EVOLUTION.md).
+
+### Existing particle products
+
 Particle analysis reads WarpX openPMD/HDF5 particle diagnostics from:
 
 ```text
