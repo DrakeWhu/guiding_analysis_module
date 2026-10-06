@@ -493,3 +493,7 @@ failure_reason
 ```
 
 Do not make Bayesian optimization depend directly on raw HDF5 dumps.
+
+## Beam visualizations
+
+`scripts/animate_beam_evolution.py` generates complete phase-space and electron-density GIFs plus every individual PNG, with fixed scales across all frames. See [BEAM_VISUALIZATION.md](docs/BEAM_VISUALIZATION.md) for selection, RZ reconstruction and the SUNRISE launcher.
