@@ -18,19 +18,30 @@ from PIL import Image
 QE = 1.602176634e-19
 
 
-def particles(ts, iteration):
-    x, y, z, ux, uy, uz, w = [np.asarray(a) for a in ts.get_particle(
-        var_list=['x', 'y', 'z', 'ux', 'uy', 'uz', 'w'],
-        species='electrons', iteration=iteration)]
+def particles(ts, iteration, species=("electrons",)):
+    arrays = [ts.get_particle(var_list=["x", "y", "z", "ux", "uy", "uz", "w"],
+                              species=name, iteration=iteration) for name in species]
+    return particle_arrays([np.concatenate([np.asarray(a[j]) for a in arrays]) for j in range(7)])
+
+
+def particle_arrays(arrays):
+    x, y, z, ux, uy, uz, w = [np.asarray(a) for a in arrays]
     valid = np.isfinite(x+y+z+ux+uy+uz+w) & (w > 0)
     x, y, z, ux, uy, uz, w = [a[valid] for a in (x,y,z,ux,uy,uz,w)]
     energy = (np.sqrt(1+ux*ux+uy*uy+uz*uz)-1)*0.51099895
     return x, y, z, ux, uy, uz, w, energy
 
 
-def density(ts, iteration, theta, n0, zref):
-    rho, info = ts.get_field(field='rho_electrons', iteration=iteration,
-                             m='all', theta=theta)
+def density(ts, iteration, theta, n0, zref, fields=("rho_electrons",)):
+    rho, info = ts.get_field(field=fields[0], iteration=iteration, m='all', theta=theta)
+    rho = np.asarray(rho).copy()
+    for name in fields[1:]:
+        extra, other = ts.get_field(field=name, iteration=iteration, m='all', theta=theta)
+        if other.axes != info.axes or not np.array_equal(other.z, info.z) or not np.array_equal(other.r, info.r):
+            raise ValueError('Density species grids differ')
+        if np.shape(extra) != rho.shape:
+            raise ValueError('Density species shapes differ')
+        rho += extra
     labels = [info.axes[i] for i in range(2)]
     if set(labels) != {'r', 'z'}:
         raise ValueError(f'Unexpected field axes: {labels}')
@@ -64,7 +75,14 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--case-dir', required=True)
     parser.add_argument('--outdir', required=True)
+    parser.add_argument('--species', default='electrons')
+    parser.add_argument('--rho-fields', default='rho_electrons')
+    parser.add_argument('--discard-pngs', action='store_true')
     args = parser.parse_args()
+    species = args.species.replace(',', ' ').split()
+    rho_fields = args.rho_fields.replace(',', ' ').split()
+    if not species or len(set(species)) != len(species) or not rho_fields or len(set(rho_fields)) != len(rho_fields):
+        parser.error('Species and rho fields must be nonempty and unique')
     case, out = Path(args.case_dir), Path(args.outdir)
     out.mkdir(parents=True, exist_ok=False)
     phase_dir, rho_dir = out/'phase_frames', out/'rho_frames'
@@ -72,6 +90,8 @@ def main():
     pt = OpenPMDTimeSeries(str(case/'diags/plasma_electrons'), check_all_files=False)
     ft = OpenPMDTimeSeries(str(case/'diags/fields'), check_all_files=False)
     iterations = sorted(map(int, pt.iterations))
+    if len(iterations) < 2:
+        raise ValueError('At least two frames are required')
     if set(iterations) != set(map(int, ft.iterations)):
         raise ValueError('Particle and field iterations differ; no frames silently dropped')
     with (case/'guiding_metrics.csv').open(newline='') as stream:
@@ -95,7 +115,7 @@ def main():
     # First pass determines common axes and colour scales over the ENTIRE series.
     for it in iterations:
         zr = float(guiding[it]['z_max_um'])
-        x,y,z,ux,uy,uz,w,k = particles(pt,it)
+        x,y,z,ux,uy,uz,w,k = particles(pt,it,species)
         forward = uz > 0
         if np.any(forward):
             rel = z[forward]*1e6-zr
@@ -105,7 +125,7 @@ def main():
             emax=max(emax,float(k[forward].max()))
             qmax=max(qmax,float(w[forward].sum()*QE*1e12))
         for theta in (0.,np.pi/2):
-            d,zz,rr=density(ft,it,theta,n0,zr)
+            d,zz,rr=density(ft,it,theta,n0,zr,rho_fields)
             dmin=min(dmin,float(np.nanmin(d)));dmax=max(dmax,float(np.nanmax(d)))
             zlo=min(zlo,float(zz.min()));zhi=max(zhi,float(zz.max()))
             xmax=max(xmax,float(np.max(np.abs(rr))))
@@ -116,7 +136,7 @@ def main():
     norm=LogNorm(vmin=min(1e-4,qmax/1e6),vmax=qmax)
     dnorm=SymLogNorm(linthresh=.05,vmin=dmin,vmax=dmax,base=10)
     metadata={'case_dir':str(case),'n_frames':len(iterations),'iterations':iterations,
-              'n0_m3':n0,'phase_selection':'finite positive weights, uz > 0; no lower energy cut',
+              'species':species, 'rho_fields':rho_fields, 'n0_m3':n0,'phase_selection':'finite positive weights, uz > 0; no lower energy cut',
               'charge_bins':'pC per bin, Cartesian particle projection over all azimuths',
               'rho':'n_e/n0 = -rho_electrons/(e*n0), all saved modes, cuts theta=0 and pi/2',
               'coordinates':'z - exact guiding z_max, micrometres',
@@ -127,7 +147,7 @@ def main():
     phase_paths=[];rho_paths=[];records=[]
     for it in iterations:
         zr=float(guiding[it]['z_max_um'])
-        x,y,z,ux,uy,uz,w,k=particles(pt,it)
+        x,y,z,ux,uy,uz,w,k=particles(pt,it,species)
         forward=uz>0;hot=forward & (k>=50)
         charge=w*QE*1e12;rel=z*1e6-zr
         title=f'{case.name}\niteration={it} | t={ptime[it]*1e15:.2f} fs | absolute z_frame={zr/1000:.4f} mm'
@@ -144,7 +164,7 @@ def main():
         path=phase_dir/f'phase_{it:08d}.png';fig.savefig(path,dpi=100);plt.close(fig);phase_paths.append(path)
         fig,axes=plt.subplots(2,1,figsize=(11,7.3),layout='constrained',sharex=True,sharey=True)
         for ax,theta,plane in zip(axes,(0.,np.pi/2),('x-z','y-z')):
-            d,zz,rr=density(ft,it,theta,n0,zr)
+            d,zz,rr=density(ft,it,theta,n0,zr,rho_fields)
             im=ax.pcolormesh(zz,rr,d,norm=dnorm,cmap='RdBu_r',shading='auto',rasterized=True)
             ax.set(title=f'Electron density: {plane} cut, all saved modes',
                    ylabel='Signed transverse coordinate (um)',xlim=(zlo,zhi),ylim=(-xmax,xmax))
@@ -160,6 +180,10 @@ def main():
     with (out/'frame_manifest.csv').open('w',newline='') as stream:
         writer=csv.DictWriter(stream,fieldnames=list(records[0]));writer.writeheader();writer.writerows(records)
     gif(phase_paths,out/'phase_space_full.gif');gif(rho_paths,out/'rho_electrons_full.gif')
+    if args.discard_pngs:
+        for path in phase_paths + rho_paths:
+            path.unlink()
+        phase_dir.rmdir(); rho_dir.rmdir()
     print(f'[OK] {len(iterations)} frames in each animation: {out}',flush=True)
 
 

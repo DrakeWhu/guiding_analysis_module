@@ -23,7 +23,7 @@ from cap_guiding.beam_evolution import (
 from cap_guiding.diagnostics import resolve_particle_diag_dir
 from cap_guiding.openpmd_io import open_series
 from cap_guiding.particle_exit import read_resolved_particle_exit_target
-from cap_guiding.particles import read_particle_dump
+from cap_guiding.particles import read_particle_dump, concatenate_particle_dumps
 
 
 def read_plasma_context(
@@ -121,9 +121,13 @@ def analyze_case(case_dir: Path, args: argparse.Namespace) -> bool:
         iterations.sort()
     # Preserve union-of-species iterations: a missing dump in one species is an
     # unavailable row, never an empty registered species.
-    by_species: dict[str, list[dict[str, Any]]] = {name: [] for name in species}
+    scopes = species + (["all_electrons"] if args.combined_scope else [])
+    if args.combined_scope and "all_electrons" in species:
+        raise ValueError("all_electrons is reserved for the combined scope")
+    by_species: dict[str, list[dict[str, Any]]] = {name: [] for name in scopes}
     errors = bool(setup_errors)
     for iteration in iterations:
+        dumps = []
         for name in species:
             ts = series.get(name)
             time_fs = float("nan")
@@ -149,6 +153,7 @@ def analyze_case(case_dir: Path, args: argparse.Namespace) -> bool:
                 if iteration not in available[name]:
                     raise RuntimeError(setup_errors.get(name, "Particle iteration is missing for this species"))
                 dump = read_particle_dump(diagnostics[name], species=name, iteration=iteration, series=ts)
+                dumps.append(dump)
                 row = summarize_beam_frame(dump, species_scope=name, z_frame_um=z,
                                            coordinate_source=source, config=cfg)
                 if row["population_status"] == "invalid_particle_data":
@@ -166,16 +171,28 @@ def analyze_case(case_dir: Path, args: argparse.Namespace) -> bool:
                 errors = True
             row["case_name"] = case_dir.name
             by_species[name].append(row)
+        if args.combined_scope:
+            if len(dumps) == len(species) and not coordinate_error:
+                combined = concatenate_particle_dumps(dumps)
+                row = summarize_beam_frame(combined, species_scope="all_electrons",
+                                           z_frame_um=z, coordinate_source=source, config=cfg)
+            else:
+                row = unavailable_beam_frame(iteration=iteration, time_fs=time_fs,
+                    species_scope="all_electrons", z_frame_um=z, coordinate_source=source,
+                    error="One or more component species/coordinates unavailable", config=cfg)
+                errors = True
+            row["case_name"] = case_dir.name
+            by_species["all_electrons"].append(row)
         print(f"[FRAME] {case_dir.name} iteration={iteration}")
     summaries = []
-    for name in species:
+    for name in scopes:
         summary = summarize_beam_evolution(
             by_species[name], plasma_start_um=start, plasma_end_um=end,
             max_gap_um=args.max_gap_um, exit_iteration=exit_iteration,
         )
         summary["plasma_bounds_source"] = bounds_source
         summary["guiding_metrics_source"] = str(guiding_path.resolve())
-        summary["particle_diagnostic_source"] = str(diagnostics[name].resolve()) if name in diagnostics else "unavailable"
+        summary["particle_diagnostic_source"] = ("combined:" + ",".join(species) if name == "all_electrons" else str(diagnostics[name].resolve()) if name in diagnostics else "unavailable")
         summaries.append(summary)
     frames = sorted((r for rows in by_species.values() for r in rows),
                     key=lambda r: (int(r["iteration"]), str(r["species_scope"])))
@@ -184,7 +201,7 @@ def analyze_case(case_dir: Path, args: argparse.Namespace) -> bool:
     partial = any(s["integration_status"] != "complete" or s["exit_snapshot_status"] in
                   ("missing", "unavailable", "invalid_particle_data") for s in summaries)
     print(f"[{'PARTIAL' if errors or partial else 'OK'}] {case_dir.name}: {products}")
-    return not (errors or partial)
+    return not (errors or (partial and not args.allow_partial_coverage))
 
 
 def main() -> None:
@@ -194,6 +211,7 @@ def main() -> None:
     mode.add_argument("--campaign-root")
     parser.add_argument("--case-glob", default="[0-9][0-9][0-9]_*")
     parser.add_argument("--species", default="electrons")
+    parser.add_argument("--combined-scope", action="store_true", help="Also reduce the concatenated all_electrons population")
     parser.add_argument("--species-diag", action="append", default=[], metavar="SPECIES=PATH")
     parser.add_argument("--guiding-metrics")
     parser.add_argument("--resolved-parameters")
@@ -209,6 +227,8 @@ def main() -> None:
     parser.add_argument("--outdir")
     parser.add_argument("--outdir-name", default="beam_analysis")
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument("--allow-partial-coverage", action="store_true",
+                        help="Keep explicit partial integration status; read/coordinate errors still fail")
     args = parser.parse_args()
     if args.campaign_root and any((args.species_diag, args.guiding_metrics, args.resolved_parameters, args.outdir)):
         parser.error("Per-case diagnostic/metadata/output overrides are only valid with --case-dir")

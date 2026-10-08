@@ -66,6 +66,30 @@ class BeamVisualizationTests(unittest.TestCase):
             self.assertEqual(field.shape,(4,5))
             np.testing.assert_allclose(field,1.)
 
+    def test_multispecies_particles_and_density_sum(self):
+        script = Path(__file__).resolve().parents[1]/'scripts/animate_beam_evolution.py'
+        spec = importlib.util.spec_from_file_location('beam_visualization_multi', script)
+        module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+        series = SyntheticSeries('unused')
+        result = module.particles(series, 0, ['background', 'nitrogen'])
+        self.assertEqual(len(result[0]), 6)
+        self.assertAlmostEqual(result[6].sum(), 12e6)
+        field, _, _ = module.density(series, 0, 0., 1e24, 0., ['rho_a','rho_b'])
+        np.testing.assert_allclose(field, 2.)
+
+    def test_density_grid_mismatch_is_rejected(self):
+        script = Path(__file__).resolve().parents[1]/'scripts/animate_beam_evolution.py'
+        spec = importlib.util.spec_from_file_location('beam_visualization_bad', script)
+        module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+        class BadSeries(SyntheticSeries):
+            def get_field(self, **kwargs):
+                rho, info = super().get_field(**kwargs)
+                if kwargs['field'] == 'rho_b':
+                    info.z = info.z + 1e-6
+                return rho, info
+        with self.assertRaisesRegex(ValueError, 'grids differ'):
+            module.density(BadSeries('unused'), 0, 0., 1e24, 0., ['rho_a','rho_b'])
+
 
 if __name__ == '__main__':
     unittest.main()

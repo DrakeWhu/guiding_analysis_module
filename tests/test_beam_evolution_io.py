@@ -113,6 +113,23 @@ class BeamEvolutionIOTests(unittest.TestCase):
         self.assertEqual(before, {p: p.read_bytes() for p in legacy.iterdir()})
         self.assertEqual(guiding_before, self.guiding.read_bytes())
 
+    def test_combined_scope_reduces_concatenated_population(self):
+        result = self.run_cli("--combined-scope")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        frames = self.read_product("beam_evolution.csv")
+        self.assertEqual(len(frames), 9)
+        total = next(r for r in frames if r['species_scope']=='all_electrons' and r['iteration']=='10')
+        self.assertAlmostEqual(float(total['charge_pC']), 8 * E_CHARGE_C * 1e12)
+        self.assertEqual(total['population_status'], 'ok')
+
+    def test_partial_coverage_option_never_hides_missing_species(self):
+        (self.ionized / "particles_000010.h5").unlink()
+        result = self.run_cli("--combined-scope", "--allow-partial-coverage")
+        self.assertNotEqual(result.returncode, 0)
+        total = next(r for r in self.read_product('beam_evolution.csv')
+                     if r['species_scope']=='all_electrons' and r['iteration']=='10')
+        self.assertEqual(total['population_status'], 'unavailable')
+
     def test_missing_species_dump_is_unavailable_not_zero(self):
         (self.ionized / "particles_000010.h5").unlink()
         result = self.run_cli()
