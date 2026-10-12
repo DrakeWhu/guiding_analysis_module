@@ -22,7 +22,8 @@ class Error : public std::runtime_error {
 };
 
 // HDF5 builds on clusters are rarely thread-safe, so every library call in this
-// module runs under this lock. Raw pread() of contiguous datasets does not.
+// module, including implicit H5open() calls in datatype macros, runs under this
+// lock. Raw POSIX open/pread/close operations on contiguous datasets do not.
 std::recursive_mutex& library_mutex();
 
 enum class ScalarKind { Float32, Float64, Int32, Int64, UInt32, UInt64, Other };

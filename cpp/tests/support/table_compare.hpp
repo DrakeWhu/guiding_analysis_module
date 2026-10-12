@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <map>
 #include <set>
 #include <string>
 #include <vector>
@@ -23,9 +24,11 @@ struct TableComparison {
 };
 
 // Compares CSV tables cell by cell: numeric cells within a relative tolerance
-// (NaN equals NaN), everything else as exact text.
+// (NaN equals NaN), everything else as exact text. Named column tolerances
+// override the default; all other columns retain the default tolerance.
 [[nodiscard]] TableComparison compare_tables(const table::CsvTable& actual, const table::CsvTable& expected,
                                              double relative_tolerance,
-                                             const std::set<std::string>& ignored_columns = {});
+                                             const std::set<std::string>& ignored_columns = {},
+                                             const std::map<std::string, double>& column_tolerances = {});
 
 }  // namespace guiding::testing

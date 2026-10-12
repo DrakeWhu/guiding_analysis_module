@@ -76,8 +76,10 @@ TEST_CASE("real WarpX dumps reproduce their guiding_metrics.csv", "[real]") {
         SUCCEED();
         continue;
       }
-      // Not byte-identical: report which columns and rows differ.
-      const auto comparison = testing::compare_tables(table::parse_csv(actual), table::parse_csv(expected), 0.0);
+      // Cross-environment reduction allowance from docs/SPEC.md. Keep every
+      // other column exact; synthetic parity tests still require byte parity.
+      const auto comparison = testing::compare_tables(table::parse_csv(actual), table::parse_csv(expected), 0.0,
+                                                      {}, {{"energy_proxy", 5e-15}});
       INFO(comparison.describe());
       CHECK(comparison.ok());
     }

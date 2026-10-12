@@ -165,8 +165,11 @@ def main() -> None:
     index += 1
     cases.append((case_name(index, "uni", 4, "0um", 0), "uni", 4, "0um", 0))
 
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "campaign_cases.txt").write_text("".join(f"{case[0]}\n" for case in cases))
     for name, kind, plateau_mm, focus, diameter in cases:
         (campaign / name).mkdir(parents=True, exist_ok=True)
+        (campaign / name / ".gitkeep").touch()
         csv_path = metrics_root / name / "guiding_metrics.csv"
         summary_path = metrics_root / name / "particle_analysis" / "particle_summary.csv"
 

@@ -8,6 +8,7 @@
 #include <cerrno>
 #include <cstring>
 #include <limits>
+#include <type_traits>
 #include <utility>
 
 #include <fmt/format.h>
@@ -38,6 +39,8 @@ void check_status(herr_t status, const char* what, const std::string& context) {
 }
 
 std::string object_name(Id object) {
+  // Validation failures also call this helper without an enclosing HDF5 lock.
+  Lock lock(library_mutex());
   const ssize_t size = H5Iget_name(object, nullptr, 0);
   if (size <= 0) {
     return "<unnamed>";
@@ -109,9 +112,24 @@ std::vector<std::string> read_strings(Id object, const std::string& name) {
   return values;
 }
 
+// Call only while holding library_mutex(): these apparently constant HDF5
+// macros may invoke H5open(), even when the library is already initialized.
 template <typename T>
-std::vector<T> read_numeric(Id object, const std::string& name, hid_t memory_type) {
+hid_t native_type_locked() {
+  if constexpr (std::is_same_v<T, double>) {
+    return H5T_NATIVE_DOUBLE;
+  } else if constexpr (std::is_same_v<T, float>) {
+    return H5T_NATIVE_FLOAT;
+  } else {
+    static_assert(std::is_same_v<T, std::uint64_t>);
+    return H5T_NATIVE_UINT64;
+  }
+}
+
+template <typename T>
+std::vector<T> read_numeric(Id object, const std::string& name) {
   Lock lock(library_mutex());
+  const hid_t memory_type = native_type_locked<T>();
   const std::string context = attribute_context(object, name);
   Handle attribute(check(H5Aopen(object, name.c_str(), H5P_DEFAULT), "H5Aopen", context));
   Handle space(check(H5Aget_space(attribute.id()), "H5Aget_space", context));
@@ -181,6 +199,7 @@ void byteswap_in_place(std::span<Out> values) {
 std::recursive_mutex& library_mutex() {
   static std::recursive_mutex mutex;
   static const bool silenced = [] {
+    Lock lock(mutex);
     // Errors are reported through exceptions; keep HDF5's stack printer quiet.
     H5Eset_auto2(H5E_DEFAULT, nullptr, nullptr);
     return true;
@@ -290,7 +309,7 @@ namespace {
 
 template <typename Out>
 void read_typed(const File& file, int fd, bool raw_allowed, Id dataset, const DatasetInfo& info,
-                std::span<Out> out, hid_t memory_type) {
+                std::span<Out> out) {
   if (out.size() != info.element_count()) {
     fail(fmt::format("buffer of {} elements for dataset {} with {} elements", out.size(),
                      object_name(dataset), info.element_count()));
@@ -325,6 +344,7 @@ void read_typed(const File& file, int fd, bool raw_allowed, Id dataset, const Da
   (void)raw_allowed;
 #endif
   Lock lock(library_mutex());
+  const hid_t memory_type = native_type_locked<Out>();
   check_status(H5Dread(dataset, memory_type, H5S_ALL, H5S_ALL, H5P_DEFAULT, out.data()), "H5Dread",
                object_name(dataset));
 }
@@ -332,11 +352,11 @@ void read_typed(const File& file, int fd, bool raw_allowed, Id dataset, const Da
 }  // namespace
 
 void File::read(Id dataset, const DatasetInfo& info, std::span<double> out) const {
-  read_typed(*this, fd_, raw_reads_allowed_ && raw_reads_enabled_, dataset, info, out, H5T_NATIVE_DOUBLE);
+  read_typed(*this, fd_, raw_reads_allowed_ && raw_reads_enabled_, dataset, info, out);
 }
 
 void File::read(Id dataset, const DatasetInfo& info, std::span<float> out) const {
-  read_typed(*this, fd_, raw_reads_allowed_ && raw_reads_enabled_, dataset, info, out, H5T_NATIVE_FLOAT);
+  read_typed(*this, fd_, raw_reads_allowed_ && raw_reads_enabled_, dataset, info, out);
 }
 
 bool link_exists(Id location, const std::string& path) {
@@ -405,7 +425,7 @@ std::vector<std::string> read_string_array_attribute(Id object, const std::strin
 }
 
 double read_double_attribute(Id object, const std::string& name) {
-  auto values = read_numeric<double>(object, name, H5T_NATIVE_DOUBLE);
+  auto values = read_numeric<double>(object, name);
   if (values.size() != 1) {
     fail(fmt::format("{} holds {} values, expected 1", attribute_context(object, name), values.size()));
   }
@@ -413,11 +433,11 @@ double read_double_attribute(Id object, const std::string& name) {
 }
 
 std::vector<double> read_double_array_attribute(Id object, const std::string& name) {
-  return read_numeric<double>(object, name, H5T_NATIVE_DOUBLE);
+  return read_numeric<double>(object, name);
 }
 
 std::uint64_t read_uint64_attribute(Id object, const std::string& name) {
-  auto values = read_numeric<std::uint64_t>(object, name, H5T_NATIVE_UINT64);
+  auto values = read_numeric<std::uint64_t>(object, name);
   if (values.size() != 1) {
     fail(fmt::format("{} holds {} values, expected 1", attribute_context(object, name), values.size()));
   }
@@ -470,7 +490,7 @@ DatasetInfo dataset_info(Id dataset) {
 }
 
 std::vector<std::size_t> constant_record_shape(Id group) {
-  auto shape = read_numeric<std::uint64_t>(group, "shape", H5T_NATIVE_UINT64);
+  auto shape = read_numeric<std::uint64_t>(group, "shape");
   return std::vector<std::size_t>(shape.begin(), shape.end());
 }
 

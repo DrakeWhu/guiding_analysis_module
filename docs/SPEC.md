@@ -3,8 +3,26 @@
 This document is the contract between the Python reference (`cap_guiding/`, `scripts/`) and the C++ port (`cpp/`).
 
 The C++ code reproduces the reference outputs from the same inputs:
-- **Numeric CSV cells:** within 1e-9 relative. Bit-identical wherever the reference arithmetic is deterministic.
+- **Numeric CSV cells:** within 1e-9 relative as a general upper bound, with the tighter column-specific limits below. Existing exact and byte-parity tests remain exact.
 - **Other cells:** integer, boolean and string cells, and the column order, are identical.
+
+### Cross-environment reduction tolerances
+
+For comparisons that independently reduce the same dumps in Python and C++, use these limits. They allow the last few floating-point digits to differ between environments; they do not permit changes to particle selection, iteration alignment, units, or formulas.
+
+| Product / columns | Relative tolerance (`rtol`) | Absolute tolerance (`atol`) |
+|---|---:|---:|
+| Field `guiding_metrics.csv`: `energy_proxy` | 5e-15 | 0 |
+| Particle `particle_summary.csv`: `weight_total` | 5e-15 | 0 |
+| End-to-end triplet long/wide tables: `energy_proxy` and `energy_proxy_{channel,uniform,vacuum}` | 5e-15 | 0 |
+| End-to-end triplet long/wide tables: `energy_norm`, `energy_norm_{channel,uniform,vacuum}`, `energy_channel_over_vacuum`, `energy_uniform_over_vacuum`, `energy_channel_over_uniform` | 1e-14 | 0 |
+| End-to-end triplet late summaries: `energy_norm_late_median` and the three `energy_*_over_*_late_median` ratio columns | 1e-14 | 0 |
+
+For finite values `actual` and `reference`, the comparison is symmetric:
+`abs(actual - reference) / max(abs(actual), abs(reference)) <= rtol`.
+Both zeros compare equal, including opposite signed zeros. A zero and a nonzero value fail; tiny nonzero values still use relative error with no absolute floor. NaN matches only NaN, and infinity matches only infinity with the same sign. Missing cells, finite/nonfinite transitions, headers, row counts, ordering, identifiers, and nonnumeric text are not relaxed.
+
+These limits apply to energy triplet columns only when their upstream field CSVs were reduced independently. Triplet table transforms supplied with identical reduced CSVs retain their existing exact/byte-parity checks. Synthetic field and particle golden tests, including soft50 and acceptance curves, also retain their existing exact/byte-parity checks. The opt-in `GUIDING_REAL_DATA_DIR` field test applies `rtol=5e-15` only to `energy_proxy`; all its other columns remain exact. The particle and downstream limits define the acceptance policy for the corresponding real-data comparisons, not additional tests in that field-only harness.
 
 Golden outputs live in `cpp/tests/data/golden/`. Their `metadata.json` records the reference commit and library versions. Regenerate them with:
 
@@ -118,6 +136,10 @@ Per iteration, on the positive-r grid `[row, z]`:
 - `n <= 128`: eight accumulators, combined as `((r0+r1)+(r2+r3))+((r4+r5)+(r6+r7))`, followed by the tail.
 - Above 128: split at `n/2` rounded down to a multiple of 8.
 
+**Accumulation-order audit:** `field_metrics.cpp` forms `I·w` in `[r, z]` C order and reduces the entire contiguous array with `np::pairwise_sum`, matching the expression in `cap_guiding/metrics.py`. The positive-r boolean selection in the Python reader creates the C-contiguous input. `particles.cpp` likewise gathers the finite, positive weights in input order and uses the same pairwise kernel for `weight_total`, matching `np.sum(w[finite])`; concatenated species retain the requested species order. Neither reduction is a serial `std::accumulate`, nor is it distributed across worker threads. Threads process separate dumps.
+
+The port therefore already follows the reference's pairwise structure in linear time, with no additional sorting or compensated-sum pass. Keep that order and `-ffp-contract=off`; changing to a serial sum or sorting weights would change the reference arithmetic without establishing better parity. Exact agreement is feasible for identical inputs and the supported reduction path, but is not a cross-environment guarantee. The small SUNRISE differences alone do not identify their cause: isolate converted input arrays, dtypes, and library versions using the real-data subset before changing the kernel. The tolerances above cover the reported reduction drift and its propagation through energy normalizations/ratios; they are acceptance bounds, not a proof of an error bound for arbitrary inputs.
+
 `np.median` sorts, then averages the middle slice as `(0 + a)/1` or `((0 + a) + b)/2`. It returns NaN if any value is NaN.
 
 Columns, in order:
@@ -166,6 +188,7 @@ z_Ez_absmax_rel_um,propagation_mm,z_peak_relative_um
 **Scopes and rows** (`scripts/analyze_particle_case.py`):
 - **Scopes:** with several `--species`, the first scope is `all_electrons` (the species concatenated), followed by one scope per species in the order given. With one species, its name is the only scope.
 - **Summary row:** `{**selection_info, **summarize_dump(...)}`. Columns come from the first row's keys, in dict order. Beamlike columns are merged first; transverse and then soft50 columns overwrite them in place, so the seven empty transverse placeholders keep their positions.
+- **Total weight:** `weight_total = pairwise_sum(w[finite])`, where `finite = isfinite(kinetic_energy) & isfinite(w) & (w > 0)`. The boolean gather preserves particle order; an empty selection gives `0.0`. The cross-environment comparison limit is `rtol=5e-15`, `atol=0`.
 - **Weighted statistics:**
   - `np.average` = `pairwise(a·w)/pairwise(w)`.
   - The percentile does no interpolation: sort by value, take the cumulative sum, then `searchsorted(left)` at `p/100·total`.

@@ -25,7 +25,8 @@ std::string TableComparison::describe() const {
 }
 
 TableComparison compare_tables(const table::CsvTable& actual, const table::CsvTable& expected,
-                               double relative_tolerance, const std::set<std::string>& ignored_columns) {
+                               double relative_tolerance, const std::set<std::string>& ignored_columns,
+                               const std::map<std::string, double>& column_tolerances) {
   TableComparison result;
   if (actual.columns != expected.columns) {
     result.header_equal = false;
@@ -59,12 +60,20 @@ TableComparison compare_tables(const table::CsvTable& actual, const table::CsvTa
         if (std::isnan(x) && std::isnan(y)) {
           continue;
         }
+        if (!std::isfinite(x) || !std::isfinite(y)) {
+          ++result.mismatches;
+          result.messages.push_back(
+              fmt::format("row {} column {}: actual {} expected {} (nonfinite mismatch)", row, name, a, e));
+          continue;
+        }
         const double scale = std::max(std::abs(x), std::abs(y));
         const double relative = scale == 0.0 ? 0.0 : std::abs(x - y) / scale;
         if (std::isfinite(relative)) {
           result.max_relative_difference = std::max(result.max_relative_difference, relative);
         }
-        if (!(relative <= relative_tolerance)) {
+        const auto override = column_tolerances.find(name);
+        const double tolerance = override == column_tolerances.end() ? relative_tolerance : override->second;
+        if (!(relative <= tolerance)) {
           ++result.mismatches;
           result.messages.push_back(
               fmt::format("row {} column {}: actual {} expected {} (rel {:.3g})", row, name, a, e, relative));

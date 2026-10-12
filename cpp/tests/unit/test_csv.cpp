@@ -9,6 +9,7 @@
 #include "guiding/table/csv.hpp"
 #include "guiding/table/py_format.hpp"
 #include "guiding/table/record.hpp"
+#include "support/table_compare.hpp"
 
 using guiding::table::Cell;
 using guiding::table::CsvDialect;
@@ -61,4 +62,48 @@ TEST_CASE("python_path_string mirrors str(pathlib.Path)", "[csv]") {
   CHECK(python_path_string("/a/./b/") == "/a/b");
   CHECK(python_path_string("") == ".");
   CHECK(python_path_string("../x") == "../x");
+}
+
+TEST_CASE("real-data reduction tolerances apply only to named columns", "[csv][parity-policy]") {
+  using guiding::table::parse_csv;
+  using guiding::testing::compare_tables;
+  const auto expected = parse_csv("iteration,energy_proxy,other,status\n1,1.0,1.0,ok\n");
+  const std::map<std::string, double> tolerances{{"energy_proxy", 5e-15}};
+  const auto compare = [&](const std::string& row) {
+    return compare_tables(parse_csv("iteration,energy_proxy,other,status\n" + row + "\n"), expected, 0.0,
+                          {}, tolerances);
+  };
+
+  CHECK(compare("1,1.000000000000004,1.0,ok").ok());
+  CHECK_FALSE(compare("1,1.000000000000006,1.0,ok").ok());
+  CHECK_FALSE(compare("1,1.0,1.0000000000000002,ok").ok());
+  CHECK_FALSE(compare("2,1.0,1.0,ok").ok());
+  CHECK_FALSE(compare("1,1.0,1.0,failed").ok());
+  CHECK_FALSE(compare("1,,1.0,ok").ok());
+  // The default remains exact when no per-column policy is supplied.
+  CHECK_FALSE(compare_tables(parse_csv("iteration,energy_proxy,other,status\n1,1.000000000000004,1.0,ok\n"),
+                             expected, 0.0).ok());
+}
+
+TEST_CASE("reduction tolerances preserve zero and nonfinite semantics", "[csv][parity-policy]") {
+  using guiding::table::parse_csv;
+  using guiding::testing::compare_tables;
+  const auto compare = [](const std::string& actual, const std::string& expected) {
+    return compare_tables(parse_csv("energy_proxy\n" + actual + "\n"),
+                          parse_csv("energy_proxy\n" + expected + "\n"), 0.0, {}, {{"energy_proxy", 5e-15}});
+  };
+  CHECK(compare("0.0", "-0.0").ok());
+  CHECK_FALSE(compare("1e-300", "0.0").ok());
+  CHECK(compare("1.000000000000004e-200", "1e-200").ok());
+  CHECK_FALSE(compare("1.00000000000001e-200", "1e-200").ok());
+  CHECK(compare("nan", "nan").ok());
+  CHECK_FALSE(compare("nan", "1.0").ok());
+  CHECK_FALSE(compare("1.0", "nan").ok());
+  CHECK_FALSE(compare("0.0", "nan").ok());
+  CHECK_FALSE(compare("nan", "0.0").ok());
+  CHECK(compare("inf", "inf").ok());
+  CHECK(compare("-inf", "-inf").ok());
+  CHECK_FALSE(compare("inf", "-inf").ok());
+  CHECK_FALSE(compare("inf", "1.0").ok());
+  CHECK_FALSE(compare("1.0", "inf").ok());
 }
