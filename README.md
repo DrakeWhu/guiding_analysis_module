@@ -61,7 +61,9 @@ usable
     The case is either raw-ready or reduced-ready.
 ```
 
-After a case becomes reduced-ready, its HDF5 diagnostics may be treated as disposable raw data, provided cleanup safety checks pass.
+A reduced-ready case has usable guiding metrics. This does not establish that
+all particle products or future-analysis inputs have been preserved; raw-data
+retention requires the separate campaign-level review described below.
 
 ## SUNRISE environment
 
@@ -253,7 +255,7 @@ Once a case has been reduced to:
 its plots can be generated without reading WarpX/openPMD HDF5 diagnostics again:
 
 ```
-OUTDIR="$ROOT/analysis_outputs/plot_existing_cases_$(date +%Y%m%d_%H%M%S)" 
+OUTDIR="$ROOT/analysis_outputs/plot_existing_cases_$(date +%Y%m%d_%H%M%S)"
 
 python scripts/analyze_campaign.py \
 --campaign-root "$ROOT" \
@@ -311,136 +313,56 @@ f20_n4e18cm3_L5mm_d300um_focm5mm
 f20_n4e18cm3_L5mm_d500um_focm5mm
 ```
 
-## Cleanup policy
+## Retention and cleanup boundary
 
-Routine cleanup must only delete explicit HDF5 files from cases that have already been reduced.
+This module does not delete raw diagnostics or authorize their removal.
+Production cleanup belongs to campaign-workflow's `docs/CLEANUP_SAFETY.md`:
+raw and reduced validation evidence, explicit eligibility, a prior file-level
+manifest, safe paths, and a separate execute request are required.
+A cleanup dry run writes a manifest/evidence; it is not read-only.
 
-A case is safe for HDF5 cleanup only if:
+The historical manual deletion recipe has been removed from this README.
+A non-empty `guiding_metrics.csv` and an inactive scheduler task are not enough
+to demonstrate scientific completeness of all retained products. The workflow's
+capillary example currently requires only that guiding CSV, while its HDF5
+globs can include particle diagnostics. The particle wrapper's non-empty
+summary check is not a complete retention contract for acceptance curves,
+species-specific products, or downstream scores.
 
-1. `CASE_DIR/guiding_metrics.csv` exists.
-2. The CSV is valid and non-empty.
-3. The corresponding SLURM task is not running.
-4. The deletion list contains only explicit `.h5` paths.
-5. Whole case directories are never deleted by routine cleanup.
+Before enabling production cleanup, the scientific owner must define the
+required reduced products per raw diagnostic family and the raw data that
+must remain available for future analyses. This documentation does not change
+campaign configuration or implement new eligibility checks. See
+campaign-workflow's `docs/INTEGRATION_REVIEW.md` for the proposed review agenda.
 
-Example safe cleanup workflow:
+## Temporal selection and optimizer compatibility
 
-```bash
-ROOT=/gpfs/home/jrodriguez/warpx_runs/capillaries_bo_full_campaign
+The exact resolved particle-exit path in `cap_guiding/particle_exit.py` requires
+the specified particle iteration; a missing exact dump must not silently become
+a nearby-frame measurement. Preserve exit-target metadata and the associated
+`target_guiding_iteration` in reduced products.
 
-squeue -u "$USER" -h -o "%i %T" \
-| awk '$2=="RUNNING" && $1 ~ /608072_/ {split($1,a,"_"); print a[2]}' \
-| sort -n > "$ROOT/analysis_outputs/running_array_ids.txt"
-```
+The capillary optimizer uses the corresponding guiding row when that target is
+provided; without a usable target it can use a single row or a last-row fallback.
+That fallback is not evidence of an exact-exit measurement. Which legacy
+observations remain scientifically fit-eligible is still a review decision.
 
-Build the list of reduced, non-running cases:
+Keep particle summaries, acceptance curves, and species-specific products
+separate from field-only metrics. A late-frame beam measurement does not show
+the maximum beam achieved during propagation, especially after particle loss.
 
-```bash
-python - <<'PY'
-from pathlib import Path
-import pandas as pd
+## Local verification
 
-root = Path("/gpfs/home/jrodriguez/warpx_runs/capillaries_bo_full_campaign")
-analysis = root / "analysis_outputs"
-
-running = {
-    line.strip()
-    for line in (analysis / "running_array_ids.txt").read_text().splitlines()
-    if line.strip()
-}
-
-safe = []
-skipped_running = []
-
-for csv in sorted(root.glob("*/guiding_metrics.csv")):
-    case_dir = csv.parent
-    case_id = case_dir.name.split("_", 1)[0]
-
-    try:
-        df = pd.read_csv(csv)
-        valid = len(df) > 0 and "iteration" in df.columns
-    except Exception:
-        valid = False
-
-    if not valid:
-        continue
-
-    if case_id in running:
-        skipped_running.append(case_dir)
-    else:
-        safe.append(case_dir)
-
-(analysis / "cleanup_safe_not_running.txt").write_text(
-    "\n".join(str(p) for p in safe) + ("\n" if safe else "")
-)
-
-print("safe cleanup dirs:", len(safe))
-print("skipped running dirs:", len(skipped_running))
-PY
-```
-
-Build an explicit HDF5 deletion list:
+With the intended scientific environment, run from the repository root:
 
 ```bash
-while read -r d; do
-    find "$d" -type f -name "*.h5" -print
-done < "$ROOT/analysis_outputs/cleanup_safe_not_running.txt" \
-> "$ROOT/analysis_outputs/h5_safe_to_delete_after_metrics.txt"
-
-wc -l "$ROOT/analysis_outputs/h5_safe_to_delete_after_metrics.txt"
+PYTHONPATH=. python -B -m unittest discover -s tests -p 'test_*.py' -v
 ```
 
-Estimate size:
-
-```bash
-python - <<'PY'
-from pathlib import Path
-
-p = Path("/gpfs/home/jrodriguez/warpx_runs/capillaries_bo_full_campaign/analysis_outputs/h5_safe_to_delete_after_metrics.txt")
-
-total = 0
-n = 0
-for line in p.read_text().splitlines():
-    f = Path(line)
-    if f.exists():
-        total += f.stat().st_size
-        n += 1
-
-print("H5 files:", n)
-print("Total GiB:", total / 1024**3)
-PY
-```
-
-Before deletion, inspect the list:
-
-```bash
-head -20 "$ROOT/analysis_outputs/h5_safe_to_delete_after_metrics.txt"
-tail -20 "$ROOT/analysis_outputs/h5_safe_to_delete_after_metrics.txt"
-
-grep -v "/capillaries_bo_full_campaign/" "$ROOT/analysis_outputs/h5_safe_to_delete_after_metrics.txt" || true
-grep -v "\.h5$" "$ROOT/analysis_outputs/h5_safe_to_delete_after_metrics.txt" || true
-```
-
-If the list is correct, save a manifest and delete only the listed HDF5 files:
-
-```bash
-cp "$ROOT/analysis_outputs/h5_safe_to_delete_after_metrics.txt" \
-   "$ROOT/analysis_outputs/h5_deleted_after_metrics_$(date +%Y%m%d_%H%M%S).txt"
-
-xargs -r rm -v < "$ROOT/analysis_outputs/h5_safe_to_delete_after_metrics.txt"
-```
-
-Verify:
-
-```bash
-find "$ROOT" -maxdepth 2 -name guiding_metrics.csv | wc -l
-
-while read -r d; do
-    find "$d" -type f -name "*.h5" -print
-done < "$ROOT/analysis_outputs/cleanup_safe_not_running.txt" | wc -l
-
-du -sh "$ROOT"
-```
+Use isolated exports and temporary directories when preserving a checkout.
+The suite includes synthetic fixtures and mocks; successful tests do not prove
+real-diagnostic or HPC validity. The recorded interpreter, dependencies,
+warnings, and results are in `docs/BASELINE_2026-10-20.md`.
 
 ## Development notes
 
@@ -459,7 +381,8 @@ campaign analysis layer
     discovers cases, detects shared baselines, builds triplets and reports readiness.
 
 cleanup layer
-    removes transient HDF5 only after valid reduced CSV metrics exist.
+    removes selected HDF5 only after workflow evidence and the reviewed
+    scientific retention contract are satisfied.
 
 optimization layer
     consumes CSV metrics and derived scores; it should not depend on raw HDF5.
