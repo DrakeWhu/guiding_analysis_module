@@ -1,0 +1,2 @@
+label,complete,ready_min_h5,stable_min_age,ready_for_analysis,channel,uniform,vacuum,channel_h5,uniform_h5,vacuum_h5,channel_newest_h5_age_min,uniform_newest_h5_age_min,vacuum_newest_h5_age_min,min_last_h5_age_min
+f20_n4e18cm3_L2mm_d150um_foc0um,True,True,True,True,000_f20_chan_n4e18cm3_L2mm_d150um_foc0um_rz,001_f20_uni_n4e18cm3_L2mm_refd150um_foc0um_rz,002_f20_vac_L2mm_refd150um_foc0um_rz,4,4,4,39.436,39.436,39.435,0.0

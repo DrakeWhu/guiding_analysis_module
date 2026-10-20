@@ -1,0 +1,55 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": { "major": 3, "minor": 24, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "release",
+      "displayName": "Release build with debug info (default)",
+      "binaryDir": "${sourceDir}/build/release",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo" }
+    },
+    {
+      "name": "dev",
+      "displayName": "Debug with address and undefined-behaviour sanitizers",
+      "binaryDir": "${sourceDir}/build/dev",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "GUIDING_SANITIZE": "address;undefined"
+      }
+    },
+    {
+      "name": "tsan",
+      "displayName": "Thread sanitizer",
+      "binaryDir": "${sourceDir}/build/tsan",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "GUIDING_SANITIZE": "thread"
+      }
+    },
+    {
+      "name": "hpc",
+      "displayName": "Compute nodes: optimised, no GUI (set HDF5_ROOT or -DGUIDING_FETCH_HDF5=ON)",
+      "binaryDir": "${sourceDir}/build/hpc",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "GUIDING_BUILD_GUI": "OFF"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "release", "configurePreset": "release" },
+    { "name": "dev", "configurePreset": "dev" },
+    { "name": "tsan", "configurePreset": "tsan" },
+    { "name": "hpc", "configurePreset": "hpc" }
+  ],
+  "testPresets": [
+    {
+      "name": "release",
+      "configurePreset": "release",
+      "output": { "outputOnFailure": true }
+    },
+    { "name": "dev", "configurePreset": "dev", "output": { "outputOnFailure": true } },
+    { "name": "tsan", "configurePreset": "tsan", "output": { "outputOnFailure": true } },
+    { "name": "hpc", "configurePreset": "hpc", "output": { "outputOnFailure": true } }
+  ]
+}

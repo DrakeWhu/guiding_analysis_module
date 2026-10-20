@@ -1,0 +1,23 @@
+=== Guiding score summary ===
+campaign_root     = synthetic/scoring/campaign
+case_metrics_root = synthetic/scoring/case_metrics
+outdir            = golden/scoring/campaign_all
+case_type         = all
+cases scored      = 22
+ok scores         = 19
+failed scores     = 3
+case_scores       = golden/scoring/campaign_all/case_scores.csv
+top_cases         = golden/scoring/campaign_all/top_cases.csv
+
+Top 10 cases:
+ rank     score                                        case_id  a0_exit  a0_exit_over_analysis_max  waist_growth  waist_jitter_log  valid_fraction plateau diameter  focus
+    1 94.479799    020_f20_chan_n4e18cm3_L4mm_d150um_foc0um_rz 1.409898                   0.975904      1.074393          0.112701             1.0       4      150    0um
+    2 92.323143         018_f20_uni_n4e18cm3_L3mm_focm200um_rz 1.341942                   0.908662      1.086389          0.044936             1.0       3      NaN m200um
+    3 84.043259    001_f20_chan_n4e18cm3_L2mm_d150um_foc0um_rz 1.205418                   0.834544      1.184195          0.106428             1.0       2      150    0um
+    4 83.238554 006_f20_chan_n4e18cm3_L2mm_d150um_focm200um_rz 1.181421                   0.834305      1.184195          0.106428             1.0       2      150 m200um
+    5 82.734029    011_f20_chan_n4e18cm3_L3mm_d150um_foc0um_rz 1.215146                   0.841101      1.263933          0.126641             1.0       3      150    0um
+    6 81.931950 016_f20_chan_n4e18cm3_L3mm_d150um_focm200um_rz 1.191149                   0.840994      1.263933          0.126641             1.0       3      150 m200um
+    7 79.090955    000_f20_chan_n4e18cm3_L2mm_d100um_foc0um_rz 1.051697                   0.840494      1.185419          0.104021             1.0       2      100    0um
+    8 79.040582    002_f20_chan_n4e18cm3_L2mm_d200um_foc0um_rz 1.051881                   0.843689      1.186662          0.107727             1.0       2      200    0um
+    9 78.392450 005_f20_chan_n4e18cm3_L2mm_d100um_focm200um_rz 1.030814                   0.840373      1.185419          0.104021             1.0       2      100 m200um
+   10 77.596178    010_f20_chan_n4e18cm3_L3mm_d100um_foc0um_rz 1.060276                   0.847942      1.269598          0.127203             1.0       3      100    0um

@@ -1,0 +1,17 @@
+{
+  "plasma_start_z": 0.0,
+  "plateau_end_z": 0.0062,
+  "plasma_end_z": 0.0069,
+  "particle_diagnostic_targets": {
+    "plateau_exit": {
+      "iteration": 6150,
+      "target_distance_m": 0.0062,
+      "dump_distance_m": 0.00615,
+      "distance_error_m": -5e-05
+    },
+    "capillary_exit": {
+      "iteration": 6800,
+      "target_distance_m": 0.0069
+    }
+  }
+}

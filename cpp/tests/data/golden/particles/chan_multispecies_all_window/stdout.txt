@@ -1,0 +1,37 @@
+=== Particle case analysis ===
+case_dir          = cpp/tests/data/synthetic/campaign/000_f20_chan_n4e18cm3_L2mm_d150um_foc0um_rz
+diag              = cpp/tests/data/synthetic/campaign/000_f20_chan_n4e18cm3_L2mm_d150um_foc0um_rz/diags/plasma_electrons
+outdir            = cpp/tests/data/golden/particles/chan_multispecies_all_window
+species           = ['electrons', 'ionized_electrons']
+which             = all
+exit_kind         = plateau
+target_prop_mm    = None
+resolved_params   = None
+guiding_metrics   = cpp/tests/data/synthetic/campaign/000_f20_chan_n4e18cm3_L2mm_d150um_foc0um_rz/guiding_metrics.csv
+max_target_delta  = None
+stride            = 1
+hot_energy_mev    = 10.0
+longitudinal      = z
+forward_cut       = True
+exit_window_mm    = 0.03
+downramp_mm      = None
+spectrum_emin    = 0.0
+spectrum_log_y   = False
+plots_only       = False
+accept_theta_mrad= [2.0, 5.0, 10.0, 20.0, 50.0]
+accept_Emin_MeV  = [10.0, 25.0, 50.0, 100.0, 150.0, 200.0, 250.0, 300.0]
+soft50_E_low     = 10.0
+soft50_E_target  = 50.0
+soft50_N_ref     = 200.0
+soft50_curve_low = [5.0, 10.0]
+==============================
+[SERIES] {'iterations': [5400, 6150, 6800], 'avail_fields': [], 'avail_species': ['electrons', 'ionized_electrons']}
+[SELECTION]
+  selection_mode = all
+  analysis_stride = 1
+[READ] iteration 5400
+[READ] iteration 6150
+[READ] iteration 6800
+[OK] wrote cpp/tests/data/golden/particles/chan_multispecies_all_window/particle_summary.csv
+[OK] wrote cpp/tests/data/golden/particles/chan_multispecies_all_window/particle_acceptance_curves.csv
+[OK] wrote cpp/tests/data/golden/particles/chan_multispecies_all_window/particle_soft50_curves.csv

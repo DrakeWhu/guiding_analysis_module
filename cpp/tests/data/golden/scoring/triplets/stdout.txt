@@ -1,0 +1,19 @@
+=== Triplet score summary ===
+campaign_root      = synthetic/scoring/campaign
+case_metrics_root  = synthetic/scoring/case_metrics
+outdir             = golden/scoring/triplets
+triplets total     = 13
+triplets scored    = 12
+triplets ok        = 7
+triplets failed    = 5
+incomplete skipped = 1
+triplet_scores     = golden/scoring/triplets/triplet_scores.csv
+top_triplets       = golden/scoring/triplets/top_triplets.csv
+
+Top 5 triplets:
+ rank  final_score  reference_factor  score_channel  score_uniform  score_vacuum reference_kind  score_delta_vs_reference                                channel_case_id                        uniform_case_id                vacuum_case_id  a0_exit_channel  a0_exit_uniform  a0_exit_vacuum  waist_growth_channel  waist_growth_uniform  waist_growth_vacuum plateau diameter  focus
+    1    73.245860          0.879951      83.238554      57.655166     59.344596        uniform                 23.893958 006_f20_chan_n4e18cm3_L2mm_d150um_focm200um_rz 008_f20_uni_n4e18cm3_L2mm_focm200um_rz 009_f20_vac_L2mm_focm200um_rz         1.181421          0.54591        0.475906              1.184195              1.111369             1.190809       2      150 m200um
+    2    72.000390          0.856706      84.043259      58.035721     58.887840        uniform                 25.155419    001_f20_chan_n4e18cm3_L2mm_d150um_foc0um_rz    003_f20_uni_n4e18cm3_L2mm_foc0um_rz    004_f20_vac_L2mm_foc0um_rz         1.205418          0.55715        0.477557              1.184195              1.111369             1.194868       2      150    0um
+    3    63.656814          0.812027      78.392450      57.655166     59.344596        uniform                 19.047853 005_f20_chan_n4e18cm3_L2mm_d100um_focm200um_rz 008_f20_uni_n4e18cm3_L2mm_focm200um_rz 009_f20_vac_L2mm_focm200um_rz         1.030814          0.54591        0.475906              1.185419              1.111369             1.190809       2      100 m200um
+    4    61.624305          0.779157      79.090955      58.035721     58.887840        uniform                 20.203115    000_f20_chan_n4e18cm3_L2mm_d100um_foc0um_rz    003_f20_uni_n4e18cm3_L2mm_foc0um_rz    004_f20_vac_L2mm_foc0um_rz         1.051697          0.55715        0.477557              1.185419              1.111369             1.194868       2      100    0um
+    5    59.963821          0.758646      79.040582      58.035721     58.887840        uniform                 20.152742    002_f20_chan_n4e18cm3_L2mm_d200um_foc0um_rz    003_f20_uni_n4e18cm3_L2mm_foc0um_rz    004_f20_vac_L2mm_foc0um_rz         1.051881          0.55715        0.477557              1.186662              1.111369             1.194868       2      200    0um

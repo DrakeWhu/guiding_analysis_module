@@ -1,0 +1,62 @@
+[
+  {
+    "name": "campaign_all",
+    "script": "score_campaign",
+    "options": {
+      "case-type": "all",
+      "top": 10
+    }
+  },
+  {
+    "name": "campaign_channel_custom",
+    "script": "score_campaign",
+    "options": {
+      "case-type": "channel",
+      "top": 5,
+      "a0-target": 1.2,
+      "exit-after-mm": 1.5,
+      "waist-growth-sigma": 0.5,
+      "entry-window-mm": 0.75
+    }
+  },
+  {
+    "name": "triplets",
+    "script": "score_triplets",
+    "options": {
+      "top": 5
+    }
+  },
+  {
+    "name": "beamlike_last",
+    "script": "score_beamlike_pairs",
+    "options": {
+      "row-selection": "last",
+      "top": 3
+    }
+  },
+  {
+    "name": "beamlike_single",
+    "script": "score_beamlike_pairs",
+    "options": {
+      "score-floor": 2.0
+    }
+  },
+  {
+    "name": "joint_inner",
+    "script": "compare_guiding_beamlike_scores",
+    "options": {
+      "triplet-scores-csv": "golden/scoring/triplets/triplet_scores.csv",
+      "beamlike-pair-scores-csv": "golden/scoring/beamlike_last/beamlike_pair_scores.csv"
+    }
+  },
+  {
+    "name": "joint_outer",
+    "script": "compare_guiding_beamlike_scores",
+    "options": {
+      "triplet-scores-csv": "golden/scoring/triplets/triplet_scores.csv",
+      "beamlike-pair-scores-csv": "golden/scoring/beamlike_single/beamlike_pair_scores.csv",
+      "join-how": "outer",
+      "top": 2
+    }
+  }
+]
