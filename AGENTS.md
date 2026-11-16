@@ -29,6 +29,25 @@
 - Analysis must not delete raw diagnostics. Use the external workflow's
   validated retention/cleanup contract for authorized cleanup.
 
+## HPC analysis runtime and provenance
+
+- Before analyzing campaign diagnostics, resolve the active scientific Python
+  interpreter, full guiding checkout SHA, and imported `cap_guiding.__file__`
+  after all module and environment scripts are sourced. Do not assume an
+  editable install or `PYTHONPATH` selects the intended worktree.
+- Match the analysis code and CLI options to the campaign's pinned workflow
+  and input/diagnostic contracts. Current default-branch features are not
+  evidence that they existed in a historical production revision.
+- Distinguish exact particle-exit selection, guiding frame selection, and beam
+  evolution coordinates. Report missing data and partial spatial coverage;
+  never silently coerce them into complete or nearest-frame measurements.
+- Preserve raw retention as a campaign-level decision. Never produce cleanup
+  eligibility or delete HDF5 data from an analysis script.
+- Use the appropriate SUNRISE/LYNX/ELI site procedure provided by
+  campaign-workflow when available; do not embed generic HPC environment
+  assumptions in scientific algorithms. Inspection is the default, and
+  analysis output writes require an explicit target and authorization.
+
 ## Verification
 
 - Use `PYTHONPATH=. python -B -m unittest discover -s tests -p 'test_*.py' -v`
