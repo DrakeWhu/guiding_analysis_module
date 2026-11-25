@@ -9,7 +9,7 @@ from unittest.mock import patch
 import h5py
 import numpy as np
 
-from laser_guiding.visualization import visualize
+from laser_guiding.visualization import _limits, visualize
 from laser_guiding_fixtures import config, make_case
 
 
@@ -65,6 +65,25 @@ class VisualizationIntegrationTests(unittest.TestCase):
                           static_diagnostics=True, min_age_seconds=0)
             self.assertFalse((output / "visualization.json").exists())
 
+
+    def test_full_window_extent_is_derived_without_clipping(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            case = make_case(tmp, particle=False)
+            c = config()
+            c["views"][0]["longitudinal_um"] = None
+            metadata = visualize(case, c, Path(tmp) / "out", requested=[10, 20],
+                                 static_diagnostics=True, min_age_seconds=0)
+            lo, hi = metadata["view_limits_um"]["xz"]["longitudinal_um"]
+            self.assertAlmostEqual(lo, -6.)
+            self.assertAlmostEqual(hi, 6.)
+
+    def test_zero_field_accepts_a_manual_zero_lower_limit(self):
+        result = _limits({"name": "proxy", "norm": "linear", "vmin": 0.},
+                         {"min": 0., "max": 0., "min_positive": float("inf"),
+                          "nonpositive_display_samples": 10})
+        self.assertEqual(result["vmin"], 0.)
+        self.assertGreater(result["vmax"], 0.)
+
     def test_actual_mp4_encoding(self):
         with tempfile.TemporaryDirectory() as tmp:
             case = make_case(tmp, particle=False)
@@ -72,6 +91,9 @@ class VisualizationIntegrationTests(unittest.TestCase):
             visualize(case, config(), output, requested=[10, 20],
                       static_diagnostics=True, min_age_seconds=0, movie=True)
             self.assertGreater((output / "fields_xz.mp4").stat().st_size, 0)
+            import imageio.v2 as imageio
+            with imageio.get_reader(str(output / "fields_xz.mp4")) as reader:
+                self.assertEqual(reader.count_frames(), 2)
 
 
 if __name__ == "__main__":

@@ -44,6 +44,8 @@ theta_rad and transverse_um/longitudinal_um bounds in micrometres. The full
 signed plane comes from openPMD-viewer, never a reflected positive half.
 Views at the same angle reuse reconstructed fields. Spatial aspect is equal;
 requested limits remain fixed, with blank regions where data were not saved.
+A null axis bound uses the full extent across the selected frames, with fixed
+limits for the entire sequence. The ELBA full view uses this for z.
 
 | field kind | Quantity before unit_scale |
 | --- | --- |
@@ -70,7 +72,8 @@ m values and names to compare mode zero and all modes.
 Fields are the default; the particle diagnostic is never opened unless
 --with-particles is passed. This path is electron-only: every configured
 species must be an electron population. Species names are explicit. Missing
-species fail; registered empty species are recorded as empty per snapshot.
+species fail; registered empty species are recorded as empty per snapshot. The pure-He example requests only its background
+electrons; add nitrogen/argon populations explicitly for injection cases.
 
 openPMD-viewer returns u=gamma*beta. Kinetic energy uses
 mc^2*u^2/(sqrt(1+u^2)+1) to retain cold-electron precision. Charge magnitude
@@ -150,7 +153,7 @@ resolve optical cycles between snapshots.
 
 Outputs include field PNGs per view, optional electron PNGs and NPZ histograms,
 optional MP4s and visualization.json: resolved config, source signatures,
-exact iterations/times, common scales, code hashes, versions and species charge
+exact iterations/times, common field/spectrum scales, code hashes, versions and species charge
 accounting. The CLI does not modify raw, simulation inputs, workflow state,
 cleanup eligibility or existing reduced outputs.
 

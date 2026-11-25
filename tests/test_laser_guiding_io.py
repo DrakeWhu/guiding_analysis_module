@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import h5py
 import numpy as np
 
 from laser_guiding.config import bin_edges, load_config, validate_config
@@ -111,6 +112,22 @@ class ElectronHistogramTests(unittest.TestCase):
             self.assertAlmostEqual(spectrum.sum() + row["Q_energy_underflow_pC"] +
                                    row["Q_energy_overflow_pC"], row["Q_selected_pC"])
             self.assertAlmostEqual(phase.sum() + row["Q_phase_outside_pC"], row["Q_selected_pC"])
+
+
+    def test_multiple_species_charge_is_added_before_histogram_plotting(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "particles.h5"
+            particles_file(path)
+            with h5py.File(path, "r+") as handle:
+                handle.copy("data/10/particles/background", "data/10/particles/second")
+            ts = open_series(tmp, backend="h5py")
+            spec = config()["particles"]
+            spec["species"] = ["background", "second"]
+            spectrum, _, rows = histograms(ts, 10, spec, 0,
+                                           bin_edges(spec["energy_bins"]),
+                                           bin_edges(spec["longitudinal_bins"]))
+            self.assertEqual(len(rows), 2)
+            self.assertAlmostEqual(float(spectrum.sum()), 2 * 14e7 * QE * 1e12)
 
     def test_cold_kinetic_energy_retains_precision(self):
         u = np.array([1e-10])

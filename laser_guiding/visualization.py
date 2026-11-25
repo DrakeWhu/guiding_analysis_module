@@ -54,13 +54,17 @@ def _limits(spec, stats):
         if not math.isfinite(lo) or hi <= 0:
             # An all-zero selected quantity can still be displayed as fully masked.
             if stats["min"] == stats["max"] == 0:
-                lo, hi = spec.get("vmin", 1e-30), spec.get("vmax", 1.0)
+                lo = spec.get("vmin", 1e-30)
+                hi = spec.get("vmax", max(lo * 10, 1.0))
             else:
                 raise ValueError(f"No positive samples for logarithmic field {spec['name']}")
     else:
         lo, hi = spec.get("vmin", stats["min"]), spec.get("vmax", stats["max"])
-    if hi == lo and "vmin" not in spec and "vmax" not in spec:
-        hi = lo + max(abs(lo) * 1e-6, 1e-30)
+    if hi == lo:
+        if "vmax" not in spec:
+            hi = lo + max(abs(lo) * 1e-6, 1e-30)
+        elif "vmin" not in spec:
+            lo = hi - max(abs(hi) * 1e-6, 1e-30)
     if not (math.isfinite(lo) and math.isfinite(hi) and lo < hi):
         raise ValueError(f"Invalid common color limits for {spec['name']}")
     return {"norm": kind, "vmin": float(lo), "vmax": float(hi),
@@ -141,7 +145,11 @@ def visualize(case_dir: str | Path, config: dict, outdir: str | Path, *,
                             "min_positive": math.inf, "nonpositive_display_samples": 0}
               for spec in config["fields"]}
     frames = []
+    view_limits = {v["name"]: {"transverse_um": [math.inf, -math.inf],
+                              "longitudinal_um": [math.inf, -math.inf]}
+                   for v in config["views"]}
     particle_max = 0.0
+    spectrum_min, spectrum_max = math.inf, 0.0
     for iteration in iterations:
         with snapshot_series(fields[iteration], iteration) as ts:
             index = list(map(int, ts.iterations)).index(iteration)
@@ -154,6 +162,10 @@ def visualize(case_dir: str | Path, config: dict, outdir: str | Path, *,
                     raise ValueError("Requested fields have different reference coordinates")
                 zref = reference
                 _update_scale(scales[spec["name"]], data)
+                for key, axis in (("transverse_um", r), ("longitudinal_um", z)):
+                    lo, hi = view_limits[view["name"]][key]
+                    view_limits[view["name"]][key] = [min(lo, float(axis[0] - (axis[1] - axis[0]) / 2)),
+                                                     max(hi, float(axis[-1] + (axis[-1] - axis[-2]) / 2))]
         row = {"iteration": iteration, "time_s": time_s, "reference_z_m": zref}
         if particle_spec:
             # Each species is read once per frame. Only small charge histograms persist.
@@ -169,6 +181,10 @@ def visualize(case_dir: str | Path, config: dict, outdir: str | Path, *,
                                 charge_spectrum_pc=spectrum, charge_phase_pc=phase)
             row["electron_species"] = rows
             particle_max = max(particle_max, float(phase.max()))
+            density = spectrum / np.diff(energy_edges)
+            spectrum_max = max(spectrum_max, float(density.max()))
+            if np.any(density > 0):
+                spectrum_min = min(spectrum_min, float(density[density > 0].min()))
         frames.append(row)
         print(f"[SCALE] iteration={iteration}", flush=True)
     limits = {f["name"]: _limits(f, scales[f["name"]]) for f in config["fields"]}
@@ -197,7 +213,8 @@ def visualize(case_dir: str | Path, config: dict, outdir: str | Path, *,
                                            shading="nearest", rasterized=True)
                     ax.set_aspect("equal")
                     ax.set(xlabel=_xlabel(config), ylabel=f"signed transverse coordinate [um], theta={view['theta_rad']:g}",
-                           xlim=view["longitudinal_um"], ylim=view["transverse_um"],
+                           xlim=view["longitudinal_um"] or view_limits[view["name"]]["longitudinal_um"],
+                           ylim=view["transverse_um"] or view_limits[view["name"]]["transverse_um"],
                            title=f"{spec.get('label', spec['name'])} | m={spec['m']}")
                     fig.colorbar(artist, ax=ax, label=spec.get("unit", "SI"))
             for name, (fig, axes) in figures.items():
@@ -215,8 +232,11 @@ def visualize(case_dir: str | Path, config: dict, outdir: str | Path, *,
             fig, axes = plt.subplots(1, 2, figsize=(12, 4.5), constrained_layout=True)
             try:
                 axes[0].stairs(spectrum / np.diff(energy_edges), energy_edges)
-                if np.any(spectrum > 0):
+                if spectrum_max > 0:
                     axes[0].set_yscale("log")
+                    axes[0].set_ylim(spectrum_min * 0.8, spectrum_max * 1.2)
+                else:
+                    axes[0].set_ylim(0, 1)
                 if particle_spec["energy_bins"].get("spacing") == "log":
                     axes[0].set_xscale("log")
                     axes[1].set_yscale("log")
@@ -230,7 +250,10 @@ def visualize(case_dir: str | Path, config: dict, outdir: str | Path, *,
                 axes[1].set(xlabel=_xlabel(config), ylabel="Electron kinetic energy [MeV]",
                             title="Window population, integrated over transverse coordinates")
                 fig.colorbar(artist, ax=axes[1], label="Electron charge magnitude [pC/bin]")
-                fig.suptitle(_title(iteration, time_s, zref))
+                selection = "uz > 0" if particle_spec.get("forward_only", False) else "all directions"
+                fig.suptitle(_title(iteration, time_s, zref) + "\n" +
+                             ", ".join(particle_spec["species"]) +
+                             f" | {selection}, K >= {particle_spec.get('energy_min_mev', 0):g} MeV")
                 path = output / "particle_frames" / f"electrons_{iteration:08d}.png"
                 fig.savefig(path, dpi=120)
                 paths["electrons"].append(path)
@@ -248,6 +271,10 @@ def visualize(case_dir: str | Path, config: dict, outdir: str | Path, *,
         "config": config, "particles_enabled": bool(particle_spec),
         "completed_step_at_selection": maximum, "static_diagnostics": static_diagnostics,
         "min_age_seconds": min_age_seconds, "frames": frames, "field_scales": limits,
+        "view_limits_um": view_limits,
+        "particle_scales": ({"phase_charge_max_pc_per_bin": particle_max,
+                             "spectrum_min_positive_pc_per_mev": spectrum_min if spectrum_max > 0 else None,
+                             "spectrum_max_pc_per_mev": spectrum_max} if particle_spec else None),
         "sources": {str(it): {"fields": fields[it].metadata(),
                               **({"particles": particles[it].metadata()} if particles else {})}
                     for it in iterations},

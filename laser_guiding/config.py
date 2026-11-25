@@ -12,7 +12,7 @@ import numpy as np
 
 
 def number(value: Any, name: str) -> float:
-    if isinstance(value, bool):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"{name} must be a finite number")
     value = float(value)
     if not math.isfinite(value):
@@ -27,6 +27,8 @@ def _only(obj: dict, allowed: set[str], name: str) -> None:
 
 
 def _range(value: Any, name: str) -> None:
+    if value is None:
+        return
     if not isinstance(value, list) or len(value) != 2:
         raise ValueError(f"{name} must be [lower, upper]")
     if number(value[0], name) >= number(value[1], name):
@@ -61,7 +63,7 @@ def load_config(path: str | Path, case_dir: str | Path) -> dict:
 def validate_config(c: dict) -> None:
     _only(c, {"schema_version", "field_diag", "parameter_file", "completed_log",
               "reference", "wavelength_m", "views", "fields", "particles"}, "config")
-    if c.get("schema_version") != 1:
+    if type(c.get("schema_version")) is not int or c["schema_version"] != 1:
         raise ValueError("Expected schema_version=1")
     if not isinstance(c.get("field_diag"), str) or not c["field_diag"]:
         raise ValueError("field_diag must explicitly name a diagnostic directory")
@@ -122,7 +124,10 @@ def validate_config(c: dict) -> None:
         p = c["particles"]
         _only(p, {"diag", "species", "forward_only", "energy_min_mev",
                   "energy_bins", "longitudinal_bins"}, "particles")
-        if not p.get("diag") or not p.get("species") or len(set(p["species"])) != len(p["species"]):
+        if (not isinstance(p.get("diag"), str) or not p["diag"] or
+                not isinstance(p.get("species"), list) or not p["species"] or
+                any(not isinstance(s, str) or not s for s in p["species"]) or
+                len(set(p["species"])) != len(p["species"])):
             raise ValueError("Specify a particle diagnostic and unique electron species")
         if not isinstance(p.get("forward_only", False), bool):
             raise ValueError("forward_only must be boolean")

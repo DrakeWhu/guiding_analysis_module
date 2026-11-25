@@ -21,10 +21,7 @@
         -300,
         300
       ],
-      "longitudinal_um": [
-        -450,
-        350
-      ]
+      "longitudinal_um": null
     },
     {
       "name": "xz_wake",
@@ -78,9 +75,7 @@
   "particles": {
     "diag": "diags/plasma_electrons",
     "species": [
-      "preionized_background_electrons",
-      "nitrogen_ionized_electrons",
-      "argon_ionized_electrons"
+      "preionized_background_electrons"
     ],
     "forward_only": false,
     "energy_min_mev": 0,
@@ -91,8 +86,8 @@
       "spacing": "log"
     },
     "longitudinal_bins": {
-      "min": -450,
-      "max": 350,
+      "min": -500,
+      "max": 400,
       "count": 320,
       "spacing": "linear"
     }

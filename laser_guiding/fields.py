@@ -70,8 +70,9 @@ def reference_z_m(reference: dict, time_s: float, plane: RZField) -> float:
 def crop(plane: RZField, view: dict, z_reference_m: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     r = plane.r_um
     z = plane.z_um - z_reference_m * 1e6
-    ri = (r >= view["transverse_um"][0]) & (r <= view["transverse_um"][1])
-    zi = (z >= view["longitudinal_um"][0]) & (z <= view["longitudinal_um"][1])
+    rb, zb = view["transverse_um"], view["longitudinal_um"]
+    ri = np.ones(r.shape, dtype=bool) if rb is None else (r >= rb[0]) & (r <= rb[1])
+    zi = np.ones(z.shape, dtype=bool) if zb is None else (z >= zb[0]) & (z <= zb[1])
     if np.count_nonzero(ri) < 2 or np.count_nonzero(zi) < 2:
         raise ValueError(f"View {view['name']} contains fewer than two cells on an axis")
     return plane.arr_rz[np.ix_(ri, zi)], r[ri], z[zi]
