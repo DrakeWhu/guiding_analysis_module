@@ -1,0 +1,109 @@
+{
+  "schema_version": 1,
+  "parameter_file": "resolved_parameters.json",
+  "field_diag": "diags/fields",
+  "completed_log": "logs/elba_622949.out",
+  "reference": {
+    "kind": "linear",
+    "initial_z_m": {
+      "parameter": "laser_centroid_initial_z_m"
+    },
+    "velocity_m_s": 299792458
+  },
+  "wavelength_m": {
+    "parameter": "laser_wavelength_m"
+  },
+  "views": [
+    {
+      "name": "xz_full",
+      "theta_rad": 0,
+      "transverse_um": [
+        -300,
+        300
+      ],
+      "longitudinal_um": null
+    },
+    {
+      "name": "xz_wake",
+      "theta_rad": 0,
+      "transverse_um": [
+        -100,
+        100
+      ],
+      "longitudinal_um": [
+        -400,
+        100
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "name": "transverse_e2",
+      "kind": "transverse_e2",
+      "m": "all",
+      "smooth_wavelengths": 2,
+      "unit_scale": 1e-24,
+      "unit": "(TV/m)^2",
+      "label": "Smoothed total transverse E squared (laser + plasma)",
+      "norm": "linear",
+      "vmin": 0
+    },
+    {
+      "name": "ez_m0",
+      "kind": "field",
+      "field": "E",
+      "coord": "z",
+      "m": 0,
+      "unit_scale": 1e-9,
+      "unit": "GV/m",
+      "label": "Longitudinal electric field",
+      "norm": "symmetric"
+    },
+    {
+      "name": "background_density",
+      "kind": "electron_density",
+      "field": "rho_preionized_background_electrons",
+      "m": 0,
+      "unit_scale": 0.000001,
+      "unit": "cm^-3",
+      "label": "Background electron density",
+      "norm": "log",
+      "vmin": 300000000000000,
+      "vmax": 1768000000000000000
+    }
+  ],
+  "particles": {
+    "diag": "diags/plasma_electrons",
+    "species": [
+      "preionized_background_electrons"
+    ],
+    "forward_only": false,
+    "energy_min_mev": 10,
+    "energy_bins": {
+      "min": 10,
+      "max": 10000,
+      "count": 180,
+      "spacing": "log"
+    },
+    "longitudinal_bins": {
+      "min": -500,
+      "max": 400,
+      "count": 320,
+      "spacing": "linear"
+    },
+    "transverse_phase_space": {
+      "position_bins_um": {
+        "min": -100,
+        "max": 100,
+        "count": 240,
+        "spacing": "linear"
+      },
+      "momentum_bins_mc": {
+        "min": -100,
+        "max": 100,
+        "count": 240,
+        "spacing": "linear"
+      }
+    }
+  }
+}

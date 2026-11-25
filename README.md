@@ -1,6 +1,15 @@
 # guiding_analysis_module
 
-Analysis module for WarpX/PyWarpX RZ capillary guiding campaigns.
+Analysis of existing WarpX/PyWarpX RZ laser-plasma diagnostics.
+
+The scheme-independent `laser_guiding/` package and `scripts/visualize_case.py`
+provide configurable field visualizations and optional electron evolution
+without capillary conventions or optimization scores. See
+[general visualization](docs/GENERAL_VISUALIZATION.md) and the
+[ELBA L4 configuration](examples/elba_l4_visualization.json).
+
+The existing `cap_guiding/` package and commands retain the CLPU campaign,
+metric, scoring and exact-exit contracts described below.
 
 This module is used in the capillary discharge / guiding simulation pipeline. It does **not** launch WarpX simulations. It analyzes WarpX openPMD/HDF5 diagnostics that already exist on disk, reduces them to lightweight per-case CSV files, and then builds campaign-level and triplet-level products.
 
