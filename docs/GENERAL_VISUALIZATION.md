@@ -46,6 +46,10 @@ Views at the same angle reuse reconstructed fields. Spatial aspect is equal;
 requested limits remain fixed, with blank regions where data were not saved.
 A null axis bound uses the full extent across the selected frames, with fixed
 limits for the entire sequence. The ELBA full view uses this for z.
+Figure geometry follows these physical bounds. Near-square full-domain panels
+are arranged side by side; wide wake zooms are stacked. Colorbars have dedicated
+axes, avoiding the large one-sided whitespace caused by equal-aspect axes
+inside a fixed, overly wide layout.
 
 | field kind | Quantity before unit_scale |
 | --- | --- |
@@ -85,6 +89,28 @@ and energy_min_mev selections are separate from histogram bin ranges.
 Energy underflow/overflow and charge outside the 2D histogram are recorded.
 The final bin includes its upper edge following NumPy conventions.
 
+The ELBA example explicitly selects K >= 10 MeV and starts its energy bins at
+10 MeV. This removes the cold background from the displayed electron products.
+The generic default remains uncut when energy_min_mev is omitted.
+
+Optional particles.transverse_phase_space specifies position_bins_um and
+momentum_bins_mc (both linear). It adds Cartesian projected (x, px/(m_e c)) and
+(y, py/(m_e c)) charge histograms in pC/bin, integrated over all other coordinates.
+The ELBA example uses +/-100 um and +/-100 m_e c with 240 bins per axis.
+These are explicit plotting ranges, not additional particle cuts. Charge outside
+each transverse histogram is recorded per species as Q_x_ux_outside_pC and
+Q_y_uy_outside_pC. Both planes and all frames share one charge color scale.
+The NPZ files retain edges and histogram arrays; electrons_transverse PNGs and,
+with --movie, electrons_transverse.mp4 use those reductions without rereading particles.
+
+Every particle-enabled run also computes Q_ge_10_MeV_pC from the entire saved
+window, with all directions included, independently of energy_min_mev,
+forward_only and all histogram bounds. This charge is shown on electron frames
+and written per species and summed in visualization.json. electron_charge.csv
+contains iteration, time_s, reference_z_m, Q_ge_10_MeV_pC and Q_selected_pC.
+Q_selected_pC follows the configured display selection, while Q_ge_10_MeV_pC
+always means K >= 10 MeV. Neither is a cumulative or trapped-beam charge.
+
 Products are dQ/dK in pC/MeV and a (relative z, K) map in pC/bin integrated
 over transverse coordinates and angles. They describe electrons still in
 the saved moving window, not a Cartesian slice, cumulative accelerated charge,
@@ -117,6 +143,7 @@ From a separate checkout in the proven Python 3.10 analysis environment:
 ~~~bash
 source "$HOME/apps/env/campaign-workflow.sh"
 source "$HOME/apps/venvs/guiding-analysis-py310/bin/activate"
+module load Git/2.41.0
 export MPLBACKEND=Agg OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 CASE="$HOME/warpx_runs/elba_l4_he_2cm_20261124/000_He_L4_reference"
 
@@ -124,11 +151,11 @@ python -B scripts/visualize_case.py \
   --case-dir "$CASE" \
   --config examples/elba_l4_visualization.json \
   --outdir "$CASE/post/general_visualization_smoke_01" \
-  --iterations 0,2631,10000
+  --iterations 0,81936,160440
 ~~~
 
-Those iterations come from the prior ELBA inspection: confirm availability in
-the target run. Missing exact frames fail. First compare a few frames with
+Those iterations exist in the ELBA output listing supplied on 2026-11-25.
+Missing exact frames fail. First compare a few frames with
 the independent ELBA reader. This example reads fields only. Use the existing
 SLURM analysis wrapper for substantial analysis; the CLI does not submit jobs.
 Keep analysis Python 3.10 separate from PIC Python 3.14.

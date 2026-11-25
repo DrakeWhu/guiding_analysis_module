@@ -123,7 +123,7 @@ def validate_config(c: dict) -> None:
     if c.get("particles") is not None:
         p = c["particles"]
         _only(p, {"diag", "species", "forward_only", "energy_min_mev",
-                  "energy_bins", "longitudinal_bins"}, "particles")
+                  "energy_bins", "longitudinal_bins", "transverse_phase_space"}, "particles")
         if (not isinstance(p.get("diag"), str) or not p["diag"] or
                 not isinstance(p.get("species"), list) or not p["species"] or
                 any(not isinstance(s, str) or not s for s in p["species"]) or
@@ -135,6 +135,13 @@ def validate_config(c: dict) -> None:
             raise ValueError("energy_min_mev must be nonnegative")
         bin_edges(p["energy_bins"])
         bin_edges(p["longitudinal_bins"])
+        if p.get("transverse_phase_space") is not None:
+            transverse = p["transverse_phase_space"]
+            _only(transverse, {"position_bins_um", "momentum_bins_mc"}, "transverse_phase_space")
+            for key in ("position_bins_um", "momentum_bins_mc"):
+                if transverse[key].get("spacing", "linear") != "linear":
+                    raise ValueError("Transverse phase-space bins must be linear")
+                bin_edges(transverse[key])
 
 
 def bin_edges(spec: dict) -> np.ndarray:

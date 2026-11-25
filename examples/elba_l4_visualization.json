@@ -78,11 +78,11 @@
       "preionized_background_electrons"
     ],
     "forward_only": false,
-    "energy_min_mev": 0,
+    "energy_min_mev": 10,
     "energy_bins": {
-      "min": 1e-8,
+      "min": 10,
       "max": 10000,
-      "count": 240,
+      "count": 180,
       "spacing": "log"
     },
     "longitudinal_bins": {
@@ -90,6 +90,20 @@
       "max": 400,
       "count": 320,
       "spacing": "linear"
+    },
+    "transverse_phase_space": {
+      "position_bins_um": {
+        "min": -100,
+        "max": 100,
+        "count": 240,
+        "spacing": "linear"
+      },
+      "momentum_bins_mc": {
+        "min": -100,
+        "max": 100,
+        "count": 240,
+        "spacing": "linear"
+      }
     }
   }
 }

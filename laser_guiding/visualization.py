@@ -1,11 +1,13 @@
 """Render field and optional electron evolution without CLPU metrics or scores."""
 from __future__ import annotations
 
+import csv
 import hashlib
 import importlib.metadata
 import json
 import math
 import platform
+import textwrap
 from pathlib import Path
 
 import matplotlib
@@ -92,7 +94,11 @@ def _movies(paths_by_name, outdir, fps):
     for name, paths in paths_by_name.items():
         with imageio.get_writer(str(outdir / f"{name}.mp4"), fps=fps, macro_block_size=1) as writer:
             for path in paths:
-                writer.append_data(imageio.imread(path))
+                frame = imageio.imread(path)
+                # H.264 requires even pixel dimensions; domain-driven sizes can be odd.
+                padding = [(0, frame.shape[0] % 2), (0, frame.shape[1] % 2)]
+                padding.extend([(0, 0)] * (frame.ndim - 2))
+                writer.append_data(np.pad(frame, padding, mode="edge"))
 
 
 def _versions():
@@ -104,6 +110,48 @@ def _versions():
         except importlib.metadata.PackageNotFoundError:
             versions[name] = "not installed"
     return versions
+
+
+
+def _field_figure(config, view, view_limits):
+    """Allocate physical panel sizes before enforcing equal spatial aspect."""
+    xlim = view["longitudinal_um"] or view_limits["longitudinal_um"]
+    ylim = view["transverse_um"] or view_limits["transverse_um"]
+    ratio = (ylim[1] - ylim[0]) / (xlim[1] - xlim[0])
+    count = len(config["fields"])
+    columns = count if ratio >= 0.65 else 1
+    rows = (count + columns - 1) // columns
+    panel_width = 4.2 if columns > 1 else 7.2
+    panel_height = panel_width * ratio
+    cell_width, cell_height = panel_width + 1.55, panel_height + 1.15
+    width, height = columns * cell_width, rows * cell_height + 0.65
+    fig = plt.figure(figsize=(width, height))
+    axes, color_axes = [], []
+    for index in range(count):
+        row, column = divmod(index, columns)
+        left = column * cell_width + 0.75
+        bottom = (rows - row - 1) * cell_height + 0.6
+        axes.append(fig.add_axes([left / width, bottom / height,
+                                  panel_width / width, panel_height / height]))
+        color_axes.append(fig.add_axes([(left + panel_width + 0.12) / width,
+                                        bottom / height, 0.14 / width,
+                                        panel_height / height]))
+    return fig, axes, color_axes
+
+
+def _empty_transverse(spec):
+    if spec.get("transverse_phase_space") is None:
+        return None
+    cfg = spec["transverse_phase_space"]
+    position = bin_edges(cfg["position_bins_um"])
+    momentum = bin_edges(cfg["momentum_bins_mc"])
+    shape = (len(position) - 1, len(momentum) - 1)
+    return {"position_edges_um": position, "momentum_edges_mc": momentum,
+            "charge_x_ux_pc": np.zeros(shape), "charge_y_uy_pc": np.zeros(shape)}
+
+
+def _charge_norm(maximum):
+    return LogNorm(vmin=max(maximum * 1e-6, 1e-30), vmax=max(maximum, 1e-29))
 
 
 def visualize(case_dir: str | Path, config: dict, outdir: str | Path, *,
@@ -149,6 +197,7 @@ def visualize(case_dir: str | Path, config: dict, outdir: str | Path, *,
                               "longitudinal_um": [math.inf, -math.inf]}
                    for v in config["views"]}
     particle_max = 0.0
+    transverse_max = 0.0
     spectrum_min, spectrum_max = math.inf, 0.0
     for iteration in iterations:
         with snapshot_series(fields[iteration], iteration) as ts:
@@ -170,16 +219,24 @@ def visualize(case_dir: str | Path, config: dict, outdir: str | Path, *,
         if particle_spec:
             # Each species is read once per frame. Only small charge histograms persist.
             from .particle_histograms import histograms
+            transverse = _empty_transverse(particle_spec)
             with snapshot_series(particles[iteration], iteration) as pts:
                 index = list(map(int, pts.iterations)).index(iteration)
                 if not math.isclose(float(pts.t[index]), time_s, rel_tol=1e-10, abs_tol=1e-21):
                     raise ValueError(f"Field and particle timestamps differ at {iteration}")
                 spectrum, phase, rows = histograms(pts, iteration, particle_spec, zref,
-                                                   energy_edges, longitudinal_edges)
+                                                   energy_edges, longitudinal_edges,
+                                                   **({"transverse": transverse} if transverse is not None else {}))
             np.savez_compressed(output / "particle_histograms" / f"{iteration:08d}.npz",
                                 energy_edges_mev=energy_edges, longitudinal_edges_um=longitudinal_edges,
-                                charge_spectrum_pc=spectrum, charge_phase_pc=phase)
+                                charge_spectrum_pc=spectrum, charge_phase_pc=phase,
+                                **(transverse or {}))
             row["electron_species"] = rows
+            row["Q_ge_10_MeV_pC"] = sum(item["Q_ge_10_MeV_pC"] for item in rows)
+            row["Q_selected_pC"] = sum(item["Q_selected_pC"] for item in rows)
+            if transverse is not None:
+                transverse_max = max(transverse_max, float(transverse["charge_x_ux_pc"].max()),
+                                     float(transverse["charge_y_uy_pc"].max()))
             particle_max = max(particle_max, float(phase.max()))
             density = spectrum / np.diff(energy_edges)
             spectrum_max = max(spectrum_max, float(density.max()))
@@ -191,20 +248,19 @@ def visualize(case_dir: str | Path, config: dict, outdir: str | Path, *,
     paths = {f"fields_{v['name']}": [] for v in config["views"]}
     if particle_spec:
         paths["electrons"] = []
+        if particle_spec.get("transverse_phase_space") is not None:
+            paths["electrons_transverse"] = []
     for row in frames:
         iteration, time_s, zref = row["iteration"], row["time_s"], row["reference_z_m"]
         figures = {}
         for view in config["views"]:
-            fig, axes = plt.subplots(len(config["fields"]), 1, squeeze=False,
-                                      figsize=(11, 3.4 * len(config["fields"])),
-                                      constrained_layout=True)
-            figures[view["name"]] = (fig, axes[:, 0])
+            figures[view["name"]] = _field_figure(config, view, view_limits[view["name"]])
         try:
             with snapshot_series(fields[iteration], iteration) as ts:
                 for spec, view, data, r, z, current_reference in _quantities(ts, iteration, config, time_s):
                     if not math.isclose(zref, current_reference, rel_tol=1e-12, abs_tol=1e-15):
                         raise ValueError("Reference changed between visualization passes")
-                    fig, axes = figures[view["name"]]
+                    fig, axes, color_axes = figures[view["name"]]
                     ax = axes[config["fields"].index(spec)]
                     scale = limits[spec["name"]]
                     shown = np.ma.masked_less_equal(data, 0) if scale["norm"] == "log" else data
@@ -212,26 +268,38 @@ def visualize(case_dir: str | Path, config: dict, outdir: str | Path, *,
                                            cmap="RdBu_r" if scale["norm"] == "symmetric" else "viridis",
                                            shading="nearest", rasterized=True)
                     ax.set_aspect("equal")
-                    ax.set(xlabel=_xlabel(config), ylabel=f"signed transverse coordinate [um], theta={view['theta_rad']:g}",
+                    ax.set(xlabel=_xlabel(config), ylabel="signed transverse coordinate [um]",
                            xlim=view["longitudinal_um"] or view_limits[view["name"]]["longitudinal_um"],
                            ylim=view["transverse_um"] or view_limits[view["name"]]["transverse_um"],
-                           title=f"{spec.get('label', spec['name'])} | m={spec['m']}")
-                    fig.colorbar(artist, ax=ax, label=spec.get("unit", "SI"))
-            for name, (fig, axes) in figures.items():
-                fig.suptitle(_title(iteration, time_s, zref) + f" | {name}")
+                           title=textwrap.fill(f"{spec.get('label', spec['name'])} | m={spec['m']}",
+                                               width=48 if len(config["fields"]) > 1 and
+                                               len(figures[view["name"]][1]) > 1 and
+                                               fig.get_figwidth() > 12 else 85))
+                    ax.title.set_fontsize(11)
+                    fig.colorbar(artist, cax=color_axes[config["fields"].index(spec)],
+                                 label=spec.get("unit", "SI"))
+            for name, (fig, axes, _) in figures.items():
+                fig.suptitle(_title(iteration, time_s, zref) +
+                             f" | {name}, theta={next(v['theta_rad'] for v in config['views'] if v['name'] == name):g}",
+                             fontsize=11)
                 path = output / "field_frames" / f"{name}_{iteration:08d}.png"
                 fig.savefig(path, dpi=120)
                 paths[f"fields_{name}"].append(path)
         finally:
-            for fig, _ in figures.values():
+            for fig, _, _ in figures.values():
                 plt.close(fig)
         if particle_spec:
             path = output / "particle_histograms" / f"{iteration:08d}.npz"
             with np.load(path) as arrays:
                 spectrum, phase = arrays["charge_spectrum_pc"], arrays["charge_phase_pc"]
+                transverse_arrays = ({key: arrays[key] for key in
+                                      ("position_edges_um", "momentum_edges_mc",
+                                       "charge_x_ux_pc", "charge_y_uy_pc")}
+                                     if particle_spec.get("transverse_phase_space") is not None else None)
             fig, axes = plt.subplots(1, 2, figsize=(12, 4.5), constrained_layout=True)
             try:
-                axes[0].stairs(spectrum / np.diff(energy_edges), energy_edges)
+                density = spectrum / np.diff(energy_edges)
+                axes[0].stairs(np.where(density > 0, density, np.nan), energy_edges)
                 if spectrum_max > 0:
                     axes[0].set_yscale("log")
                     axes[0].set_ylim(spectrum_min * 0.8, spectrum_max * 1.2)
@@ -242,8 +310,7 @@ def visualize(case_dir: str | Path, config: dict, outdir: str | Path, *,
                     axes[1].set_yscale("log")
                 axes[0].set(xlabel="Electron kinetic energy [MeV]", ylabel="dQ/dK [pC/MeV]",
                             xlim=(energy_edges[0], energy_edges[-1]), title="Window electron spectrum")
-                pnorm = LogNorm(vmin=max(particle_max * 1e-6, 1e-30),
-                                vmax=max(particle_max, 1e-29))
+                pnorm = _charge_norm(particle_max)
                 artist = axes[1].pcolormesh(longitudinal_edges, energy_edges,
                                             np.ma.masked_less_equal(phase.T, 0),
                                             norm=pnorm, cmap="magma", shading="flat")
@@ -253,12 +320,35 @@ def visualize(case_dir: str | Path, config: dict, outdir: str | Path, *,
                 selection = "uz > 0" if particle_spec.get("forward_only", False) else "all directions"
                 fig.suptitle(_title(iteration, time_s, zref) + "\n" +
                              ", ".join(particle_spec["species"]) +
-                             f" | {selection}, K >= {particle_spec.get('energy_min_mev', 0):g} MeV")
+                             f" | {selection}, K >= {particle_spec.get('energy_min_mev', 0):g} MeV"
+                             f" | Q(K >= 10 MeV) = {row['Q_ge_10_MeV_pC']:.4g} pC")
                 path = output / "particle_frames" / f"electrons_{iteration:08d}.png"
                 fig.savefig(path, dpi=120)
                 paths["electrons"].append(path)
             finally:
                 plt.close(fig)
+
+            if transverse_arrays is not None:
+                fig, axes = plt.subplots(1, 2, figsize=(12, 4.8), constrained_layout=True)
+                try:
+                    for ax, axis in zip(axes, ("x", "y")):
+                        artist = ax.pcolormesh(
+                            transverse_arrays["position_edges_um"],
+                            transverse_arrays["momentum_edges_mc"],
+                            np.ma.masked_less_equal(transverse_arrays[f"charge_{axis}_u{axis}_pc"].T, 0),
+                            norm=_charge_norm(transverse_max), cmap="magma", shading="flat")
+                        ax.set(xlabel=f"{axis} [um]", ylabel=f"p_{axis} / (m_e c)",
+                               title=f"Projected {axis} phase space")
+                        fig.colorbar(artist, ax=ax, label="Electron charge magnitude [pC/bin]")
+                    fig.suptitle(_title(iteration, time_s, zref) + "\n" +
+                                 ", ".join(particle_spec["species"]) +
+                                 f" | {selection}, K >= {particle_spec.get('energy_min_mev', 0):g} MeV" +
+                                 f" | Q(K >= 10 MeV) = {row['Q_ge_10_MeV_pC']:.4g} pC")
+                    path = output / "particle_frames" / f"electrons_transverse_{iteration:08d}.png"
+                    fig.savefig(path, dpi=120)
+                    paths["electrons_transverse"].append(path)
+                finally:
+                    plt.close(fig)
         print(f"[FRAME] iteration={iteration}", flush=True)
     if movie:
         _movies(paths, output, fps)
@@ -266,6 +356,12 @@ def visualize(case_dir: str | Path, config: dict, outdir: str | Path, *,
         if mapping is not None:
             for iteration in iterations:
                 mapping[iteration].check()
+    if particle_spec:
+        with (output / "electron_charge.csv").open("w", newline="") as handle:
+            columns = ("iteration", "time_s", "reference_z_m", "Q_ge_10_MeV_pC", "Q_selected_pC")
+            writer = csv.DictWriter(handle, fieldnames=columns, extrasaction="ignore")
+            writer.writeheader()
+            writer.writerows(frames)
     metadata = {
         "schema_version": 1, "status": "complete", "case_dir": str(case),
         "config": config, "particles_enabled": bool(particle_spec),
@@ -274,7 +370,8 @@ def visualize(case_dir: str | Path, config: dict, outdir: str | Path, *,
         "view_limits_um": view_limits,
         "particle_scales": ({"phase_charge_max_pc_per_bin": particle_max,
                              "spectrum_min_positive_pc_per_mev": spectrum_min if spectrum_max > 0 else None,
-                             "spectrum_max_pc_per_mev": spectrum_max} if particle_spec else None),
+                             "spectrum_max_pc_per_mev": spectrum_max,
+                             "transverse_charge_max_pc_per_bin": transverse_max} if particle_spec else None),
         "sources": {str(it): {"fields": fields[it].metadata(),
                               **({"particles": particles[it].metadata()} if particles else {})}
                     for it in iterations},
@@ -284,6 +381,8 @@ def visualize(case_dir: str | Path, config: dict, outdir: str | Path, *,
         "transverse_e2": "smoothed total transverse electric field squared; not isolated laser intensity or a0",
         "density": "electron_density converts the configured species rho by -rho/e, without ion charge",
         "log_masking": "nonpositive values are masked; counts cover requested views including overlaps",
+        "transverse_phase_space": "Cartesian projections (x, px/mc) and (y, py/mc); integrated over other coordinates",
+        "charge_ge_10_MeV": "All saved-window electrons with K >= 10 MeV, all directions; independent of plotting bins and display selection",
         "particle_weights": "w counts physical electrons; Q=e*sum(w); no extra cylindrical factor",
         "code_sha256": {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
                         for p in Path(__file__).parent.glob("*.py")},
